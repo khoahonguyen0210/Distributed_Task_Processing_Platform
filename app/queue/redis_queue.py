@@ -1,5 +1,6 @@
 import json
 import secrets
+import time
 import uuid
 from functools import cache
 from importlib import resources
@@ -52,6 +53,7 @@ class RedisQueue:
         "replay",
         "promote",
         "recover",
+        "release",
     )
 
     def __init__(self, client: "redis.Redis", settings: Settings) -> None:
@@ -200,6 +202,9 @@ class RedisQueue:
         lease_ms = int(self.s.lease_seconds * 1000)
         return bool(self._run("renew", job.id, job.lease_token, lease_ms))
 
+    def release(self, job: Job) -> bool:
+        return bool(self._run("release", job.id, job.lease_token))
+
     def wait_for_work(self, timeout: float) -> None:
         self.r.blpop([self.key("wake")], timeout=timeout)
 
@@ -245,6 +250,44 @@ class RedisQueue:
             "running": running,
             "dead_letter": dead,
         }
+
+    # Worker registry
+
+    def worker_heartbeat(self, worker_id: str, info: dict[str, str | int]) -> None:
+        now = int(time.time() * 1000)
+        pipe = self.r.pipeline(transaction=False)
+        pipe.zadd(self.key("workers"), {worker_id: now})
+        pipe.hset(self.key(f"worker:{worker_id}"), mapping={**info, "last_seen": now})
+        pipe.expire(self.key(f"worker:{worker_id}"), int(self.s.worker_stale_seconds * 4) + 1)
+        pipe.execute()
+
+    def remove_worker(self, worker_id: str) -> None:
+        self.r.zrem(self.key("workers"), worker_id)
+        self.r.delete(self.key(f"worker:{worker_id}"))
+
+    def prune_workers(self) -> int:
+        """Forgets long-silent workers. Recently stale ones stay visible."""
+        cutoff = int((time.time() - self.s.worker_stale_seconds * 4) * 1000)
+        return int(self.r.zremrangebyscore(self.key("workers"), "-inf", cutoff))
+
+    def workers(self) -> list[dict[str, Any]]:
+        now = int(time.time() * 1000)
+        stale_ms = self.s.worker_stale_seconds * 1000
+        entries = self.r.zrange(self.key("workers"), 0, -1, withscores=True)
+        pipe = self.r.pipeline(transaction=False)
+        for worker_id, _ in entries:
+            pipe.hgetall(self.key(f"worker:{worker_id}"))
+        result = []
+        for (worker_id, seen), info in zip(entries, pipe.execute(), strict=True):
+            result.append(
+                {
+                    **info,
+                    "id": worker_id,
+                    "last_seen": int(seen),
+                    "alive": now - seen <= stale_ms,
+                }
+            )
+        return result
 
     def recent_durations(self) -> list[int]:
         return [int(v) for v in self.r.lrange(self.key("durations"), 0, -1)]
