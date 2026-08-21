@@ -165,14 +165,15 @@ def test_renewed_lease_is_not_recovered(queue: RedisQueue) -> None:
 
 def test_cancel_only_waiting_jobs(queue: RedisQueue) -> None:
     waiting = queue.enqueue("add", {"a": 1, "b": 1}, delay_seconds=60)
-    assert queue.cancel(waiting.id) == "cancelled"
+    assert queue.cancel(waiting.id) == (True, "cancelled")
+    assert queue.cancel(waiting.id) == (False, "cancelled")
     assert queue.r.zscore(queue.key("scheduled"), waiting.id) is None
 
     queue.enqueue("add", {"a": 1, "b": 1})
     running = queue.claim("w")
     assert running is not None
-    assert queue.cancel(running.id) == "running"
-    assert queue.cancel("0" * 32) is None
+    assert queue.cancel(running.id) == (False, "running")
+    assert queue.cancel("0" * 32) == (False, None)
 
 
 def test_replay_keeps_history_and_resets_attempts(queue: RedisQueue) -> None:

@@ -216,10 +216,12 @@ class RedisQueue:
     def recover_expired(self, batch: int = 100) -> int:
         return int(self._run("recover", batch, self.s.dead_letter_ttl_seconds))
 
-    def cancel(self, job_id: str) -> str | None:
-        """Returns 'cancelled', the current state if it cannot be cancelled, or None if missing."""
+    def cancel(self, job_id: str) -> tuple[bool, str | None]:
+        """Returns (True, "cancelled"), (False, current state), or (False, None) if missing."""
         outcome = self._run("cancel", job_id, self.s.job_ttl_seconds)
-        return str(outcome) if outcome else None
+        if outcome == 1:
+            return True, "cancelled"
+        return False, str(outcome) if outcome else None
 
     def replay(self, job_id: str) -> bool:
         return bool(self._run("replay", job_id))

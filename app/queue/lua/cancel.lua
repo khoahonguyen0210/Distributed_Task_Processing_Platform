@@ -1,5 +1,6 @@
 -- ARGV: prefix, id, ttl_seconds
 -- Only jobs that are waiting can be cancelled. A running job is never interrupted.
+-- Returns 1 on success, the current state if it cannot be cancelled, or false if missing.
 local id, ttl = ARGV[2], tonumber(ARGV[3])
 local key = job_key(id)
 local state = redis.call('HGET', key, 'state')
@@ -15,4 +16,4 @@ redis.call('HINCRBY', STATS, 'cancelled', 1)
 add_history(id, now, 'cancelled', 'cancelled', redis.call('HGET', key, 'attempts'), '', '')
 expire_job(id, ttl)
 emit(id, state)
-return 'cancelled'
+return 1
