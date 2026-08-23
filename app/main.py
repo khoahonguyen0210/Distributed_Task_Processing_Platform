@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router as jobs_router
 from app.core.config import Settings, get_settings
 from app.core.logging import setup_logging
+from app.observability.routes import router as health_router
 from app.queue.redis_queue import RedisQueue
 
 log = logging.getLogger("taskq.api")
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None, queue: RedisQueue | None = None
         lifespan=lifespan,
     )
     app.include_router(jobs_router)
+    app.include_router(health_router)
 
     @app.exception_handler(redis.RedisError)
     async def redis_down(request: Request, exc: redis.RedisError) -> JSONResponse:
