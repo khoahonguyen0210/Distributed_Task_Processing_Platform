@@ -41,7 +41,7 @@ local function emit(id, previous)
   local f = redis.call('HMGET', job_key(id),
     'type', 'state', 'attempts', 'max_attempts', 'priority', 'updated_at', 'worker_id', 'error')
   redis.call('PUBLISH', P .. 'events', cjson.encode({
-    job_id = id, type = f[1], state = f[2], previous = previous or '',
+    job_id = id, job_type = f[1], state = f[2], previous = previous or '',
     attempts = tonumber(f[3]), max_attempts = tonumber(f[4]), priority = tonumber(f[5]),
     ts = tonumber(f[6]), worker_id = f[7] or '', error = f[8] or ''
   }))
