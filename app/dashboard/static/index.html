@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>taskq dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/dashboard/style.css">
+  <script src="/dashboard/app.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <a class="mark" href="/dashboard/">taskq</a>
+    <nav class="bar-right">
+      <span id="link" class="pill pill-wait" role="status"><span class="dot"></span><span id="link-text">Connecting</span></span>
+      <a class="pill" href="/docs">API docs</a>
+    </nav>
+  </header>
+
+  <section class="hero" id="hero" aria-label="Summary">
+    <canvas id="field" aria-hidden="true"></canvas>
+    <div class="hero-text">
+      <p class="eyebrow">Local job queue</p>
+      <h1 id="headline">Loading the queue.</h1>
+    </div>
+    <ul class="legend" aria-hidden="true">
+      <li><span class="key key-wait"></span>Waiting</li>
+      <li><span class="key key-run"></span>Running</li>
+      <li><span class="key key-ok"></span>Succeeded</li>
+      <li><span class="key key-bad"></span>Failed</li>
+    </ul>
+  </section>
+
+  <main>
+
+    <section class="stats" aria-label="Numbers">
+      <div class="stat"><span class="stat-label">Waiting</span><span class="stat-value" id="m-ready">–</span></div>
+      <div class="stat"><span class="stat-label">Scheduled</span><span class="stat-value" id="m-scheduled">–</span></div>
+      <div class="stat"><span class="stat-label">Running</span><span class="stat-value" id="m-running">–</span></div>
+      <div class="stat"><span class="stat-label">Dead letter</span><span class="stat-value" id="m-dead">–</span></div>
+      <div class="stat"><span class="stat-label">Succeeded</span><span class="stat-value" id="m-succeeded">–</span></div>
+      <div class="stat"><span class="stat-label">Failed</span><span class="stat-value" id="m-failed">–</span></div>
+      <div class="stat"><span class="stat-label">Retries</span><span class="stat-value" id="m-retried">–</span></div>
+      <div class="stat"><span class="stat-label">Run time, p50 / p95</span><span class="stat-value" id="m-duration">–</span></div>
+    </section>
+
+    <div class="layout">
+      <section class="jobs" aria-labelledby="jobs-title">
+        <div class="section-head">
+          <h2 id="jobs-title">Recent jobs</h2>
+          <div class="filters">
+            <label class="select-pill"><span>State</span>
+              <select id="f-state">
+                <option value="">All</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="queued">Queued</option>
+                <option value="running">Running</option>
+                <option value="retry_scheduled">Retry scheduled</option>
+                <option value="succeeded">Succeeded</option>
+                <option value="failed">Failed</option>
+                <option value="dead_letter">Dead letter</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </label>
+            <label class="select-pill"><span>Type</span>
+              <select id="f-type"><option value="">All</option></select>
+            </label>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th><th>State</th><th class="num">Tries</th>
+                <th class="num">Priority</th><th>Updated</th><th>Last error</th>
+              </tr>
+            </thead>
+            <tbody id="jobs"></tbody>
+          </table>
+          <p id="jobs-empty" class="empty" hidden>No jobs yet. Submit one to see it here.</p>
+        </div>
+      </section>
+
+      <aside class="side">
+        <section aria-labelledby="submit-title">
+          <h2 id="submit-title">Submit a job</h2>
+          <form id="submit" class="form">
+            <label>Type <select id="s-type" required></select></label>
+            <p id="s-help" class="hint"></p>
+            <label>Payload (JSON) <textarea id="s-payload" rows="2" spellcheck="false" required></textarea></label>
+            <div class="row">
+              <label>Priority <input id="s-priority" type="number" min="0" max="9" value="5"></label>
+              <label>Delay (s) <input id="s-delay" type="number" min="0" max="86400" step="any" value="0"></label>
+              <label>Max tries <input id="s-attempts" type="number" min="1" max="10" placeholder="3"></label>
+              <label>Copies <input id="s-count" type="number" min="1" max="100" value="1"></label>
+            </div>
+            <button type="submit" class="button">Submit</button>
+            <p id="s-status" class="hint" role="status"></p>
+          </form>
+        </section>
+
+        <section aria-labelledby="workers-title">
+          <h2 id="workers-title">Workers</h2>
+          <ul id="workers" class="workers"></ul>
+          <p id="workers-empty" class="empty" hidden>No workers have checked in.</p>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <span>taskq · runs on this computer only</span>
+    <span><a href="/docs">API docs</a> · <a href="/metrics">Metrics</a> · <a href="/health/ready">Health</a></span>
+  </footer>
+
+  <dialog id="detail" aria-labelledby="d-title">
+    <div class="sheet">
+      <div class="sheet-head">
+        <p class="eyebrow" id="d-type">Job</p>
+        <button type="button" class="pill" id="d-close">Close</button>
+      </div>
+      <h2 id="d-title">Job</h2>
+      <dl id="d-fields" class="fields"></dl>
+      <h3>Payload</h3>
+      <pre id="d-payload"></pre>
+      <h3>Result</h3>
+      <pre id="d-result"></pre>
+      <h3>History</h3>
+      <ol id="d-history" class="history"></ol>
+      <div class="sheet-actions">
+        <button type="button" class="button" id="d-cancel" hidden>Cancel job</button>
+        <button type="button" class="button" id="d-replay" hidden>Run again</button>
+        <span id="d-status" class="hint" role="status"></span>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>
