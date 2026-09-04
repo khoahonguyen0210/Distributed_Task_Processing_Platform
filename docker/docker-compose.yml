@@ -1,0 +1,54 @@
+name: taskq
+
+x-env: &env
+  REDIS_URL: redis://redis:6379/0
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: taskq:local
+  init: true
+  restart: unless-stopped
+  environment: *env
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    environment:
+      <<: *env
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.workers", "--concurrency", "${WORKER_CONCURRENCY:-1}"]
+    stop_grace_period: 30s
+    deploy:
+      replicas: ${WORKERS:-3}
+
+volumes:
+  redis-data:
