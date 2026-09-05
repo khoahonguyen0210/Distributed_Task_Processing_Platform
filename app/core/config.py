@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
     key_prefix: str = Field(default="taskq:", pattern=r"^[A-Za-z0-9_:\-]{1,64}$")
 
     job_ttl_seconds: int = Field(default=86_400, ge=60)

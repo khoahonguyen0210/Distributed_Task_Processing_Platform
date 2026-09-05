@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.queue.redis_queue import RedisQueue
 
 # Tests use their own database and a random key prefix, so they never touch real data.
-TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
+TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://127.0.0.1:6379/15")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
