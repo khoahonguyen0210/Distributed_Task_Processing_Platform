@@ -50,7 +50,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["app"]
+packages = ["app", "scripts"]
 
 # redis-py types every call as "sync or async", which hides real errors in noise.
 [[tool.mypy.overrides]]

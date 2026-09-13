@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    env:
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint and format
+        run: |
+          ruff check app tests scripts
+          ruff format --check app tests scripts
+      - name: Type check
+        run: mypy
+      - name: Tests
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Start the stack
+        run: docker compose -f docker/docker-compose.yml up -d --build --wait
+      - name: Run one job end to end
+        run: python3 scripts/smoke_test.py http://127.0.0.1:8000
+      - name: Show logs
+        if: always()
+        run: docker compose -f docker/docker-compose.yml logs --no-color --tail 50
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down
