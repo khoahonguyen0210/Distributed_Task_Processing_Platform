@@ -146,6 +146,7 @@ class Worker:
             try:
                 if time.monotonic() - last_beat >= self.s.heartbeat_seconds:
                     self._heartbeat()
+                    self.q.trim_indexes()
                     last_beat = time.monotonic()
                 self.q.promote_due()
                 recovered = self.q.recover_expired()

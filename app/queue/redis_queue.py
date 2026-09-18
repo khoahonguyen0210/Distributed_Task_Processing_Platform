@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.queue.models import Job, JobState
 
 JSON_SEPARATORS = (",", ":")
+MAX_DELAY_SECONDS = 86_400
 
 
 class PayloadTooLargeError(ValueError):
@@ -97,12 +98,12 @@ class RedisQueue:
     ) -> Job:
         if not 0 <= priority <= 9:
             raise ValueError("priority must be between 0 and 9")
+        if not 0 <= delay_seconds <= MAX_DELAY_SECONDS:
+            raise ValueError(f"delay must be between 0 and {MAX_DELAY_SECONDS} seconds")
         body = encode_json(payload, self.s.max_payload_bytes, PayloadTooLargeError)
         attempts = max_attempts or self.s.default_max_attempts
         job_id = new_job_id()
-        self._run(
-            "enqueue", job_id, job_type, body, priority, attempts, int(max(delay_seconds, 0) * 1000)
-        )
+        self._run("enqueue", job_id, job_type, body, priority, attempts, int(delay_seconds * 1000))
         job = self.get(job_id, with_history=False)
         assert job is not None
         return job
@@ -215,6 +216,19 @@ class RedisQueue:
 
     def recover_expired(self, batch: int = 100) -> int:
         return int(self._run("recover", batch, self.s.dead_letter_ttl_seconds))
+
+    def trim_indexes(self) -> int:
+        """Drops index entries whose jobs have surely expired. Returns how many were removed."""
+        now = time.time()
+        # A dead-letter job expires exactly dead_letter_ttl after it entered the list.
+        dead_cutoff = now - self.s.dead_letter_ttl_seconds
+        # Any job is gone this long after it was created: longest delay, then longest TTL.
+        ttl = max(self.s.job_ttl_seconds, self.s.dead_letter_ttl_seconds)
+        jobs_cutoff = now - MAX_DELAY_SECONDS - ttl - 3600
+        pipe = self.r.pipeline(transaction=False)
+        pipe.zremrangebyscore(self.key("dead"), "-inf", int(dead_cutoff * 1000))
+        pipe.zremrangebyscore(self.key("jobs"), "-inf", int(jobs_cutoff * 1000))
+        return int(sum(pipe.execute()))
 
     def cancel(self, job_id: str) -> tuple[bool, str | None]:
         """Returns (True, "cancelled"), (False, current state), or (False, None) if missing."""

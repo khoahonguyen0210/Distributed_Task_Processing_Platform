@@ -256,3 +256,24 @@ def test_stats_counts(queue: RedisQueue) -> None:
     stats = queue.stats()
     assert stats["total_submitted"] == 3
     assert (stats["ready"], stats["scheduled"], stats["running"]) == (1, 1, 1)
+
+
+def test_trim_indexes_drops_only_expired_entries(queue: RedisQueue, settings: Settings) -> None:
+    fresh = queue.enqueue("flaky", {"fail_times": 1}, max_attempts=1)
+    job = queue.claim("w")
+    assert job is not None
+    queue.fail(job, "boom", retryable=True, retry_delay=0, duration_ms=1)
+    long_ago = int((time.time() - settings.dead_letter_ttl_seconds - 86_400 * 3) * 1000)
+    queue.r.zadd(queue.key("dead"), {"old-dead": long_ago})
+    queue.r.zadd(queue.key("jobs"), {"old-job": long_ago})
+
+    assert queue.stats()["dead_letter"] == 2
+    assert queue.trim_indexes() == 2
+    assert queue.stats()["dead_letter"] == 1
+    assert queue.r.zscore(queue.key("jobs"), fresh.id) is not None
+    assert [j.id for j in queue.dead_letters()] == [fresh.id]
+
+
+def test_delay_has_an_upper_bound(queue: RedisQueue) -> None:
+    with pytest.raises(ValueError):
+        queue.enqueue("add", {"a": 1, "b": 1}, delay_seconds=86_401)

@@ -3,6 +3,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.queue.models import Job, JobState
+from app.queue.redis_queue import MAX_DELAY_SECONDS
 
 
 class SubmitJob(BaseModel):
@@ -14,7 +15,9 @@ class SubmitJob(BaseModel):
     type: str = Field(min_length=1, max_length=64, description="A registered job type.")
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = Field(default=5, ge=0, le=9, description="9 runs first.")
-    delay_seconds: float = Field(default=0, ge=0, le=86_400, description="Wait before running.")
+    delay_seconds: float = Field(
+        default=0, ge=0, le=MAX_DELAY_SECONDS, description="Wait before running."
+    )
     max_attempts: int | None = Field(default=None, ge=1, le=10)
 
 
