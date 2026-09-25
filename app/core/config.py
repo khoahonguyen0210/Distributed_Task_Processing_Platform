@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65_535)
+    # Host names the API answers to. Others are refused, which blocks DNS rebinding.
+    allowed_hosts: list[str] = ["127.0.0.1", "localhost"]
+    max_body_bytes: int = Field(default=131_072, ge=1_024, le=8_388_608)
     list_scan_limit: int = Field(default=2_000, ge=100, le=100_000)
     log_level: str = "INFO"
 

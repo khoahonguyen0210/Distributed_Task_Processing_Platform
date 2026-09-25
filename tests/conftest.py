@@ -30,6 +30,7 @@ def make_settings(**overrides: object) -> Settings:
         "retry_base_seconds": 0.1,
         "retry_max_seconds": 0.5,
         "shutdown_grace_seconds": 2.0,
+        "allowed_hosts": ["testserver"],
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg, arg-type]
