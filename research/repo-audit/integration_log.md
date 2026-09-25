@@ -25,6 +25,8 @@ What was built, the main decisions, and how each part was checked. Dates are in 
 | Dashboard events were never shown: the job's `type` field overwrote the message type `job` | The WebSocket integration test hung | Renamed the field to `job_type`, and the hub now sets `type` last |
 | Worker threads waited about 2 s for each new Redis connection on Windows | The first benchmark showed 3 threads running jobs one after another | Default Redis address changed to `127.0.0.1` |
 | The `dead` and `jobs` indexes kept IDs of expired jobs forever, and the dead-letter count kept counting them | Review of memory growth | Workers remove expired index entries at each heartbeat; delays are capped at 1 day so the cutoff is known |
+| The API answered to any host name, so a website using DNS rebinding could read it through a visitor's browser | Security review | Host names are checked against `ALLOWED_HOSTS` (default `127.0.0.1` and `localhost`) |
+| Request bodies of any size were read into memory before being rejected | Security review | Bodies over `MAX_BODY_BYTES` (128 KB) are refused from the `Content-Length` header; bodies without one are refused |
 
 ## How each part was checked
 
@@ -41,7 +43,23 @@ What was built, the main decisions, and how each part was checked. Dates are in 
 | Docker stack | `scripts/smoke_test.py` | `docker compose up --build --wait`: all services healthy |
 | Benchmark output | `tests/unit/test_benchmark.py` | Full run: 1, 3, 5 workers, both models, 3 trials, 7,200 of 7,200 jobs succeeded |
 
-Last full local run: 90 tests passed, Ruff and mypy (strict) reported no issues.
+Last full local run: 94 tests passed, Ruff and mypy (strict) reported no issues.
+
+## Security and privacy review
+
+| Check | Result |
+|---|---|
+| Personal data | None collected or stored. No accounts, tracking, or outside requests. The tracked files hold no names, paths, emails, or keys |
+| Running submitted code | Not possible. Only five registered handlers run; payloads are strict JSON schemas with no extra fields |
+| Cross-site requests | A `text/plain` POST from another site is rejected (422). The WebSocket checks the `Origin` header |
+| DNS rebinding | Refused by the host check (400) |
+| Large requests | Refused before reading (413), or 411 without a length |
+| Error and log contents | Validation errors leave out submitted values; no stack traces go to clients; logs hold no payloads |
+| Network exposure | API on `127.0.0.1` only; Compose does not publish Redis |
+| Container | Runs as a normal user (UID 10001) |
+| Dependency scan | Trivy 0.67.2, 2026-10-11: 0 findings in Python packages; 8 high-severity CVEs (44 package entries) in Debian 13 base packages, none with a fix released: CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410 (util-linux), CVE-2025-69720 (ncurses), CVE-2026-16742 (systemd libraries), CVE-2026-54369 (acl), CVE-2026-9538 (perl). Rebuild the image when Debian releases fixes |
+
+The API has no sign-in by design, because it is meant for local use. This review is a careful check by hand, not a professional audit.
 
 ## Not checked yet
 
@@ -62,5 +80,5 @@ Last full local run: 90 tests passed, Ruff and mypy (strict) reported no issues.
 | Containers | `docker/Dockerfile`, `docker/docker-compose.yml` | Run locally |
 | Benchmarking | `scripts/benchmark.py`, `benchmarks/results/` | Measured on one laptop |
 | CI | `.github/workflows/ci.yml` | Written, not yet run |
-| Security review | README "Privacy and security" | Reviewed by hand; not an audit |
+| Security review | README "Privacy and security", `tests/unit/test_http_limits.py`, Trivy scan | Reviewed by hand and tested; not an audit |
 | AWS, Terraform, Kubernetes | None | Not part of this project |

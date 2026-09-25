@@ -35,7 +35,7 @@ Measured on one Windows laptop (Intel i7-1260P), 200 jobs per trial, median of 3
 - For CPU jobs, separate processes are needed. Five threads in one process were no faster than one thread, because of Python's global interpreter lock.
 - A worker killed in the middle of a job lost nothing. Another worker took the job and finished it.
 - When 8 threads claimed 60 jobs at the same time, no job was given out twice.
-- **90 tests pass**, and Ruff and mypy (strict) report 0 issues.
+- **94 tests pass**, and Ruff and mypy (strict) report 0 issues.
 
 Raw data: [`benchmarks/results/20261011T034507Z/`](benchmarks/results/20261011T034507Z/).
 
@@ -148,7 +148,7 @@ docker/         Dockerfile and Docker Compose file
 - No personal data, accounts, tracking, or analytics. Nothing is sent outside your computer.
 - Only the five job types can run. Submitted text is never run as code.
 - The API has no sign-in, so it listens only on `127.0.0.1`. Do not expose it to a network.
-- Payloads are limited to 16 KB.
+- Payloads are limited to 16 KB, and request bodies to 128 KB.
 
 ## Limits
 

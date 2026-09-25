@@ -6,9 +6,11 @@ import redis
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes import router as jobs_router
 from app.core.config import Settings, get_settings
+from app.core.http import BodyLimit
 from app.core.logging import setup_logging
 from app.dashboard.routes import router as dashboard_router
 from app.events.hub import EventHub
@@ -42,6 +44,8 @@ def create_app(settings: Settings | None = None, queue: RedisQueue | None = None
         summary="Submit jobs, follow their state, and watch workers process them.",
         lifespan=lifespan,
     )
+    app.add_middleware(BodyLimit, limit=settings.max_body_bytes)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
     app.include_router(jobs_router)
     app.include_router(health_router)
     app.include_router(events_router)
