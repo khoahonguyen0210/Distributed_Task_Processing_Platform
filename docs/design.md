@@ -1,6 +1,6 @@
 # Design
 
-This page explains how the queue keeps its promises: which Redis keys exist, which script changes them, and what can go wrong.
+This page explains how the queue works inside: which Redis keys it uses, which script changes them, and what can go wrong. A lease is the time a worker is allowed to hold a job.
 
 ## Redis keys
 
@@ -34,7 +34,7 @@ Each script runs inside Redis as one step. No other command can run in the middl
 | Script | Called by | Change |
 |---|---|---|
 | `enqueue.lua` | API | New job to `ready` (or to `scheduled` with a delay) |
-| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. Skips stale entries |
+| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. Skips IDs of jobs that have expired or moved on |
 | `renew.lua` | Worker heartbeat | Moves the lease end forward, only if the token still matches |
 | `complete.lua` | Worker | `running` to `succeeded`, only if the token matches. Sets the TTL |
 | `fail.lua` | Worker | `running` to `retry_scheduled`, `failed`, or `dead_letter`, only if the token matches |
@@ -49,7 +49,7 @@ All scripts take the time from Redis (`TIME`), so the API, the workers, and the 
 ## Rules the scripts keep
 
 1. **A job has at most one owner.** `claim.lua` removes the job from `ready` and creates the lease in the same step, so two workers cannot get the same job.
-2. **Only the owner can finish a job.** Every claim gets a new random token. `complete`, `fail`, `renew`, and `release` check it. A worker whose lease ran out and was taken back gets a refusal and its result is dropped.
+2. **Only the owner can finish a job.** Every claim gets a new random token, and `complete`, `fail`, `renew`, and `release` check it. If a worker's lease runs out and the job is taken back, that worker is refused and its result is dropped.
 3. **A running job always has a lease.** If its worker dies, the lease runs out and `recover.lua` takes the job back. Nothing is lost silently.
 4. **Tries are bounded.** A lost run counts as a try, so a job that crashes every worker ends in `dead_letter`. A run stopped by a clean shutdown does not count.
 5. **Finished jobs expire.** Succeeded, failed, and cancelled jobs are deleted after `JOB_TTL_SECONDS`, dead letters after `DEAD_LETTER_TTL_SECONDS`. Workers remove expired IDs from `dead` and `jobs` every heartbeat.
@@ -72,7 +72,7 @@ Delivery is at least once. A job runs twice when:
 - the worker dies after the handler finished but before `complete.lua` ran, or
 - the handler runs longer than the lease and the worker cannot renew it, for example because Redis was unreachable.
 
-In the second case the first run's result is refused, so only one result is saved, but any side effect of the first run has already happened. Handlers must therefore be idempotent. All built-in handlers are: running them twice gives the same result and changes nothing outside the worker.
+In the second case the first run's result is refused, so only one result is saved, but anything the first run changed outside the queue has already happened. Job code must therefore be safe to run twice (the technical word is idempotent). The built-in job types are: running one twice gives the same result and changes nothing outside the worker.
 
 ## Live events
 

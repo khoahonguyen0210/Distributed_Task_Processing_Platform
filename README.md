@@ -22,6 +22,13 @@
 
 Apps should not make people wait for slow work such as sending emails or building reports. They hand that work to a job queue, and background workers do it. This project builds such a queue on Redis, with a live dashboard that shows every job as it waits, runs, fails, and is tried again.
 
+## Features
+
+- **Safe when a worker crashes.** A worker holds a job for a limited time, called a lease, and keeps renewing it. If the worker dies, the lease runs out and another worker takes the job.
+- **Retries and dead letters.** A failed job waits longer before each new try. After 3 tries it goes to the dead-letter list, which holds jobs that keep failing. You can run them again from there.
+- **Priority, delay, and cancel.** Jobs run by priority (0 to 9), can start later, and can be cancelled while they wait.
+- **Health checks and metrics.** Health endpoints, plus a `/metrics` page in Prometheus format.
+
 ## Results
 
 Measured on one Windows laptop (Intel i7-1260P), 200 jobs per trial, median of 3 trials. **7,200 of 7,200 jobs succeeded.**
@@ -37,7 +44,7 @@ Measured on one Windows laptop (Intel i7-1260P), 200 jobs per trial, median of 3
 - When 8 threads claimed 60 jobs at the same time, no job was given out twice.
 - **94 tests pass**, and Ruff and mypy (strict) report 0 issues.
 
-Raw data: [`benchmarks/results/20261011T034507Z/`](benchmarks/results/20261011T034507Z/).
+These numbers show how the queue scales on one laptop. They are not its top speed, and not a production claim. Raw data: [`benchmarks/results/20261011T034507Z/`](benchmarks/results/20261011T034507Z/).
 
 ## How it works
 
@@ -53,16 +60,18 @@ flowchart LR
 
 1. **Submit.** The API saves the job in Redis and returns at once.
 2. **Claim.** A free worker takes the next job and holds it for 30 seconds. It renews that hold while it works.
-3. **Finish or retry.** A job that fails waits a little, then runs again, up to 3 tries. After that, it goes to a dead-letter list, where it can be run again by hand.
+3. **Finish or retry.** A job that fails waits a little, then runs again, up to 3 tries. After that, it goes to the dead-letter list, where you can run it again by hand.
 4. **Recover.** If a worker crashes, its hold runs out, and another worker takes the job.
 
-Every step is one Lua script, so Redis runs it as a single action and two workers can never take the same job. Jobs can also have a priority (0 to 9) or a delay. Details are in [`docs/design.md`](docs/design.md).
+Redis stores each job as a hash, and keeps sorted sets for jobs that are ready, delayed, running, or dead. Every step is one Lua script, which Redis runs as a single action, so two workers can never take the same job. Details are in [`docs/design.md`](docs/design.md).
+
+A job is always in one of these states: `scheduled`, `queued`, `running`, `retry_scheduled`, `succeeded`, `failed`, `dead_letter`, or `cancelled`.
 
 ## Job types
 
-The job types are stand-ins for real work, so each behavior is easy to see. No other type can run.
+These job types are simple examples of real work, so each behavior is easy to see. No other type can run.
 
-| Type | Payload | Stands in for |
+| Type | Payload (the input) | Example of |
 |---|---|---|
 | `add` | `{"a": 2, "b": 3}` | A quick task |
 | `sleep` | `{"seconds": 2}` | Sending an email or calling another service |
@@ -70,21 +79,43 @@ The job types are stand-ins for real work, so each behavior is easy to see. No o
 | `flaky` | `{"fail_times": 2}` | A service that fails a few times, then works |
 | `fail` | `{"message": "text"}` | A request with bad data, which is not retried |
 
+## API
+
+Submit a job with `POST /api/jobs`, then read it back with the `id` from the reply:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/jobs -H "Content-Type: application/json" \
+  -d '{"type": "add", "payload": {"a": 2, "b": 3}}'
+curl http://127.0.0.1:8000/api/jobs/<id>
+```
+
+`priority` (0 to 9, default 5), `delay_seconds`, and `max_attempts` are optional.
+
+| Endpoint | Use |
+|---|---|
+| `GET /api/jobs`, `GET /api/jobs/{id}` | List jobs (filter by `state` or `type`), read one job with its history |
+| `POST /api/jobs/{id}/cancel` | Cancel a job that is still waiting |
+| `GET /api/dead-letters`, `POST /api/dead-letters/{id}/replay` | List dead letters, run one again |
+| `GET /health/live`, `GET /health/ready` | Is the API up, are Redis and workers up |
+| `GET /metrics` | Queue size, totals, workers, and run time (`/api/metrics` returns JSON) |
+
 ## Tech stack
 
-| Area | Tools |
-|---|---|
-| API | Python, FastAPI, Pydantic |
-| Queue | Redis 7.4 with Lua scripts and Pub/Sub |
-| Dashboard | HTML, CSS, JavaScript, Canvas, WebSockets |
-| Deployment and CI | Docker Compose, GitHub Actions, pytest, Ruff, mypy |
+| Area | Tools | Used for |
+|---|---|---|
+| API | Python, FastAPI, Pydantic | Taking jobs and reporting their state |
+| Queue | Redis 7.4, Lua scripts, Pub/Sub | Storing jobs, safe claiming, live events |
+| Dashboard | HTML, CSS, JavaScript, Canvas, WebSockets | Showing jobs and workers live |
+| Monitoring | Health endpoints, Prometheus text format | Checking the service and reading metrics |
+| Deployment and CI | Docker Compose, GitHub Actions, pytest, Ruff, mypy | Running the stack and checking every change |
 
 ## Quick start
 
-You need Docker Desktop.
+You need Git and Docker Desktop.
 
 ```bash
-cd docker
+git clone https://github.com/khoahonguyen0210/Distributed_Task_Processing_Platform.git
+cd Distributed_Task_Processing_Platform/docker
 docker compose up --build
 ```
 
@@ -99,7 +130,7 @@ The full API is at <http://127.0.0.1:8000/docs>. Stop everything with `docker co
 
 ### Without Docker for the app
 
-You need Python 3.12 and a Redis server.
+You need Python 3.12 and a Redis server. Run these in the repository folder.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -156,6 +187,12 @@ docker/         Dockerfile and Docker Compose file
 - A job can run twice after a crash, so job code must be safe to repeat.
 - High-priority jobs always go first, so a steady stream of them can keep low-priority jobs waiting.
 - Measured on one laptop only.
+
+## Future work
+
+- Add a Redis replica, so one crashed server does not stop the queue.
+- Add sign-in to the API, so it can be used on a network.
+- Let users register their own job types.
 
 ## Author
 

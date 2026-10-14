@@ -8,7 +8,7 @@ for _ = 1, 20 do
   if #popped == 0 then return false end
   local id = popped[1]
   local key = job_key(id)
-  -- Skip ids whose job expired or changed state; they are stale index entries.
+  -- Skip ids whose job has expired or moved on; they are left over in the index.
   if redis.call('HGET', key, 'state') == 'queued' then
     local attempt = redis.call('HINCRBY', key, 'attempts', 1)
     redis.call('HSET', key, 'state', 'running', 'worker_id', worker, 'lease_token', token,

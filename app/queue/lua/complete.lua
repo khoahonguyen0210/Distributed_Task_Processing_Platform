@@ -3,7 +3,7 @@ local id, token, result = ARGV[2], ARGV[3], ARGV[4]
 local ttl, duration = tonumber(ARGV[5]), tonumber(ARGV[6])
 local key = job_key(id)
 local cur = redis.call('HMGET', key, 'state', 'lease_token', 'attempts', 'worker_id')
--- The lease token is a fence: a worker that lost its lease cannot finish the job.
+-- A worker that lost its lease cannot finish the job, because its lease token no longer matches.
 if cur[1] ~= 'running' or cur[2] ~= token then return 0 end
 
 local now = now_ms()
