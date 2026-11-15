@@ -12,6 +12,8 @@
 ![WebSockets](https://img.shields.io/badge/WebSockets-010101)
 ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![KEDA](https://img.shields.io/badge/KEDA-0B2A4A)
 ![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -20,7 +22,7 @@
 
 </div>
 
-Apps should not make people wait for slow work such as sending emails or building reports. They hand that work to a job queue, and background workers do it. This project builds such a queue on Redis, with a live dashboard that shows every job as it waits, runs, fails, and is tried again.
+Apps should not make people wait for slow work such as sending emails or building reports. They hand that work to a job queue, and background workers do it. This project builds such a queue on Redis, with a live dashboard that shows every job as it waits, runs, fails, and is tried again. On a local Kubernetes cluster, workers start when jobs arrive and stop when the queue is empty.
 
 ## Features
 
@@ -28,6 +30,7 @@ Apps should not make people wait for slow work such as sending emails or buildin
 - **Retries and dead letters.** A failed job waits longer before each new try. After 3 tries it goes to the dead-letter list, which holds jobs that keep failing. You can run them again from there.
 - **Priority, delay, and cancel.** Jobs run by priority (0 to 9), can start later, and can be cancelled while they wait.
 - **Health checks and metrics.** Health endpoints, plus a `/metrics` page in Prometheus format.
+- **Workers that scale themselves.** On Kubernetes, KEDA adds workers when jobs wait and removes them when the queue is empty, down to zero. A removed worker finishes its job first.
 
 ## Results
 
@@ -45,6 +48,23 @@ Measured on one Windows laptop (Intel i7-1260P), 200 jobs per trial, median of 3
 - **94 tests pass**, and Ruff and mypy (strict) report 0 issues.
 
 These numbers show how the queue scales on one laptop. They are not its top speed, and not a production claim. Raw data: [`benchmarks/results/20261011T034507Z/`](benchmarks/results/20261011T034507Z/).
+
+### Autoscaling on Kubernetes
+
+One burst of 120 jobs (1 s each) on a local kind cluster, measured for 200 s. Median of 3 trials. **1,440 of 1,440 jobs succeeded.**
+
+| Workers | Finish time | End-to-end p95 | Worker-seconds |
+|---|---:|---:|---:|
+| KEDA, 0 to 5 | 32.9 s | 29.6 s | **239** |
+| Fixed 1 | 120.5 s | 113.7 s | 200 |
+| Fixed 3 | 40.2 s | 37.8 s | 600 |
+| Fixed 5 | 24.1 s | 21.8 s | 1,000 |
+
+- KEDA finished 8.8 s after 5 fixed workers, but used **76% less worker time**.
+- With no workers running, the first job started about 7 s after the burst.
+- Workers stopped mid-job by a scale-down finished their jobs. A worker killed mid-job lost nothing.
+
+Details and raw data: [`docs/kubernetes.md`](docs/kubernetes.md).
 
 ## How it works
 
@@ -108,6 +128,7 @@ curl http://127.0.0.1:8000/api/jobs/<id>
 | Dashboard | HTML, CSS, JavaScript, Canvas, WebSockets | Showing jobs and workers live |
 | Monitoring | Health endpoints, Prometheus text format | Checking the service and reading metrics |
 | Deployment and CI | Docker Compose, GitHub Actions, pytest, Ruff, mypy | Running the stack and checking every change |
+| Autoscaling | Kubernetes (kind), KEDA, Helm | Starting and stopping workers by queue size |
 
 ## Quick start
 
@@ -143,6 +164,21 @@ python -m app.workers --concurrency 2
 
 Run the last line in its own terminal, once for each worker you want.
 
+### On Kubernetes
+
+You also need kind, kubectl, and Helm. Run these in the repository folder. [`docs/kubernetes.md`](docs/kubernetes.md) explains each step.
+
+```bash
+kind create cluster --config infra/kind/cluster.yaml
+docker build -f docker/Dockerfile -t taskq:local .
+docker save --platform linux/amd64 -o taskq.tar taskq:local
+kind load image-archive taskq.tar --name taskq
+helm repo add kedacore https://kedacore.github.io/charts
+helm install keda kedacore/keda --version 2.21.0 --namespace keda --create-namespace --wait
+kubectl apply -k infra/kubernetes/autoscaling
+kubectl -n taskq port-forward svc/api 8000:8000
+```
+
 ## Testing
 
 | Step | Command |
@@ -151,12 +187,14 @@ Run the last line in its own terminal, once for each worker you want.
 | All tests (needs Redis) | `pytest -q` |
 | Stack check (needs the Docker stack) | `python scripts/smoke_test.py` |
 | Benchmark (needs Redis) | `python -m scripts.benchmark` |
+| Kill and stop workers during jobs (needs the cluster) | `python -m scripts.chaos_test` |
+| Autoscaling benchmark (needs the cluster) | `python -m scripts.burst_benchmark` |
 
 Tests use Redis database 15 and delete their own keys. Without Redis, only the unit tests run.
 
 ## Configuration
 
-Settings come from environment variables or a `.env` file. Copy [`.env.example`](.env.example), which lists every setting with its default. The ones most often changed are `REDIS_URL`, `API_PORT`, `LEASE_SECONDS`, and `DEFAULT_MAX_ATTEMPTS`.
+Settings come from environment variables or a `.env` file. Copy [`.env.example`](.env.example), which lists every setting with its default. The ones most often changed are `REDIS_URL`, `API_PORT`, `LEASE_SECONDS`, and `DEFAULT_MAX_ATTEMPTS`. For Docker Compose, `WORKERS` and `WORKER_CONCURRENCY` in `docker/.env` set the number of workers and the jobs each one runs at once.
 
 On Windows, use `127.0.0.1`, not `localhost`, in `REDIS_URL`. Otherwise each new connection waits about 2 seconds.
 
@@ -169,9 +207,11 @@ app/workers/    Worker process
 app/jobs/       Job types
 app/dashboard/  Dashboard page
 tests/          Unit tests and tests against a real Redis
-scripts/        Benchmark and stack check
+scripts/        Benchmarks, stack check, and cluster tests
+benchmarks/     Raw benchmark and test results
 docs/           Design notes and images
 docker/         Dockerfile and Docker Compose file
+infra/          kind cluster and Kubernetes files
 ```
 
 ## Privacy and security
@@ -186,7 +226,7 @@ docker/         Dockerfile and Docker Compose file
 - One Redis server holds everything.
 - A job can run twice after a crash, so job code must be safe to repeat.
 - High-priority jobs always go first, so a steady stream of them can keep low-priority jobs waiting.
-- Measured on one laptop only.
+- Measured on one laptop only. The Kubernetes cluster has one node, so all pods share the same CPU.
 
 ## Future work
 

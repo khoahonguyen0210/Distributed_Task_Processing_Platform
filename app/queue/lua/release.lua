@@ -1,6 +1,3 @@
--- ARGV: prefix, id, lease_token
--- Puts a running job back in the queue when its worker must stop before the job ends.
--- The stopped run does not count as an attempt.
 local id, token = ARGV[2], ARGV[3]
 local key = job_key(id)
 local cur = redis.call('HMGET', key, 'state', 'lease_token', 'priority', 'worker_id')

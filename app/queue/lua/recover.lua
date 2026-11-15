@@ -1,6 +1,3 @@
--- ARGV: prefix, batch_size, dead_ttl
--- Finds running jobs whose lease ran out (the worker died or hung) and takes them back.
--- A lost run counts as an attempt, so a job that always kills its worker ends in dead letter.
 local batch, dead_ttl = tonumber(ARGV[2]), tonumber(ARGV[3])
 local now = now_ms()
 local expired = redis.call('ZRANGEBYSCORE', LEASES, '-inf', now, 'LIMIT', 0, batch)

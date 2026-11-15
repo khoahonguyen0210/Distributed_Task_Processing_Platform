@@ -1,8 +1,5 @@
 "use strict";
 
-// The WebSocket only says that something changed. The API is the source of truth,
-// so after a reconnect or a "resync" message the page reloads everything.
-
 const PAGE_SIZE = 50;
 const EXAMPLES = {
   add: { a: 2, b: 3 },
@@ -36,8 +33,6 @@ const workerNumbers = new Map();
 let pending = [];
 let openJobId = null;
 
-// Small helpers
-
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   Object.assign(node, props);
@@ -51,7 +46,6 @@ function badge(state) {
   return el("span", { className: `state s-${state}`, textContent: STATE_NAMES[state] || state });
 }
 
-// Jobs and workers are shown by what they are, not by their random IDs.
 function describe(job) {
   const label = LABELS[job.type];
   return label && job.payload ? label(job.payload) : job.type;
@@ -110,8 +104,6 @@ function explain(body) {
   }
   return "";
 }
-
-// Jobs table
 
 function filters() {
   return { state: $("f-state").value, type: $("f-type").value };
@@ -215,14 +207,11 @@ function applyEvents() {
       jobs.set(job.id, job);
       updateRow(job);
       trimJobs();
-      // Events carry no payload, so fetch the list to fill in the job's name.
       reloadJobs();
     }
   }
   reloadStats();
 }
-
-// Summary and workers
 
 function setText(id, value) {
   $(id).textContent = value === null || value === undefined ? "–" : String(value);
@@ -232,7 +221,6 @@ function plural(n, one, many) {
   return n === 1 ? one : many;
 }
 
-// The big heading is a sentence built from live numbers.
 function setHeadline(m) {
   const n = (value) => el("em", { textContent: String(value) });
   const running = m.queue.running;
@@ -309,8 +297,6 @@ async function loadAll() {
   await Promise.allSettled(tasks);
 }
 
-// Job detail
-
 function field(name, value) {
   return [el("dt", { textContent: name }), el("dd", {}, value ?? "–")];
 }
@@ -382,8 +368,6 @@ async function detailAction(path, done) {
   await refreshDetailNow();
 }
 
-// Submitting jobs
-
 async function loadTypes() {
   const types = await api("/api/job-types");
   const submitOptions = types.map((t) => el("option", { value: t.name, textContent: t.name }));
@@ -438,8 +422,6 @@ async function submitJobs(event) {
   }
 }
 
-// Live connection
-
 function setLink(kind, text) {
   const link = $("link");
   link.className = `pill pill-${kind}`;
@@ -468,9 +450,6 @@ function connect(delay = 500) {
     setTimeout(() => connect(Math.min(delay * 2, 10000)), delay);
   };
 }
-
-// Hero picture: every job is a point of light and every live worker is a ring.
-// It is driven by the same events as the table, so it shows the real queue.
 
 const COLORS = {
   wait: [217, 210, 189],
@@ -525,7 +504,6 @@ function makeField(canvas) {
     }
   }
 
-  // The waiting cloud sits in the middle; workers stand in an arc on the right.
   function cloudPoint() {
     const a = Math.random() * Math.PI * 2;
     const d = Math.sqrt(Math.random());
@@ -691,11 +669,8 @@ function makeField(canvas) {
 
 let heroField = null;
 
-// Start
-
 document.addEventListener("DOMContentLoaded", () => {
   heroField = makeField($("field"));
-  // The top bar is clear over the dark hero and solid below it.
   new IntersectionObserver(
     ([entry]) => {
       document.querySelector(".bar").classList.toggle("solid", entry.intersectionRatio < 0.12);
@@ -731,7 +706,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadTypes().catch(() => {});
   connect();
-  // Heartbeats do not send events, so workers and totals are polled.
   setInterval(() => {
     loadWorkers().catch(() => {});
     loadMetrics().catch(() => {});

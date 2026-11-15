@@ -1,0 +1,73 @@
+{
+  "run_id": "20261115T070327Z",
+  "machine": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logical_cpus": 16,
+    "os": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.10",
+    "docker_cpus": 16,
+    "docker_memory_gib": 7.61,
+    "kubernetes": "v1.37.0",
+    "nodes": 1,
+    "keda_image": "ghcr.io/kedacore/keda:2.21.0"
+  },
+  "totals_before": {
+    "submitted": 20,
+    "succeeded": 20,
+    "failed": 0,
+    "retried": 0,
+    "dead_letter": 0,
+    "cancelled": 0,
+    "replayed": 0,
+    "recovered": 0
+  },
+  "totals_after": {
+    "submitted": 26,
+    "succeeded": 26,
+    "failed": 0,
+    "retried": 0,
+    "dead_letter": 0,
+    "cancelled": 0,
+    "replayed": 0,
+    "recovered": 1
+  },
+  "results": [
+    {
+      "scenario": "worker-scale-down",
+      "action": "5 workers, each running one sleep job; then scaled to 1 worker",
+      "job_seconds": 20,
+      "states_before": {
+        "running": 5
+      },
+      "states_after": {
+        "succeeded": 5
+      },
+      "attempts": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "released_jobs": 0,
+      "seconds_to_finish": 20.9,
+      "passed": true
+    },
+    {
+      "scenario": "worker-kill",
+      "action": "force-deleted the worker pod (no grace period) while it ran a sleep job",
+      "job_seconds": 20,
+      "killed_pod": "worker-6c59d96b94-4tqgf",
+      "states_before": {
+        "running": 1
+      },
+      "states_after": {
+        "succeeded": 1
+      },
+      "attempts": 2,
+      "recovered": true,
+      "seconds_to_finish": 50.6,
+      "passed": true
+    }
+  ]
+}

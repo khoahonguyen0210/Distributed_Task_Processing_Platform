@@ -205,7 +205,7 @@ def test_size_limits(queue: RedisQueue, settings: Settings) -> None:
 def test_list_jobs_filters_and_skips_expired(queue: RedisQueue) -> None:
     a = queue.enqueue("add", {"a": 1, "b": 1})
     b = queue.enqueue("sleep", {"seconds": 0})
-    time.sleep(0.002)  # keep c newer than b
+    time.sleep(0.002)
     c = queue.enqueue("add", {"a": 2, "b": 2}, delay_seconds=30)
     queue.r.delete(queue.key(f"job:{a.id}"))
 

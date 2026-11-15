@@ -5,7 +5,6 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 STATIC = resources.files("app.dashboard") / "static"
 
-# The page loads only its own files and talks only to this server.
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "

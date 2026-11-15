@@ -19,7 +19,6 @@ TERMINAL_STATES = frozenset(
     {JobState.SUCCEEDED, JobState.FAILED, JobState.DEAD_LETTER, JobState.CANCELLED}
 )
 
-# The only moves the Lua scripts make. Tests check every published event against this table.
 ALLOWED_TRANSITIONS: dict[JobState | None, frozenset[JobState]] = {
     None: frozenset({JobState.QUEUED, JobState.SCHEDULED}),
     JobState.SCHEDULED: frozenset({JobState.QUEUED, JobState.CANCELLED}),

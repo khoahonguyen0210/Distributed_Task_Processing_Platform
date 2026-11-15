@@ -1,4 +1,3 @@
--- Shared helpers. Every script receives the key prefix as ARGV[1].
 local P = ARGV[1]
 local READY = P .. 'ready'
 local SCHEDULED = P .. 'scheduled'
@@ -16,8 +15,6 @@ end
 local function job_key(id) return P .. 'job:' .. id end
 local function history_key(id) return P .. 'job:' .. id .. ':history' end
 
--- Higher priority first, then the order jobs became ready. A counter keeps
--- that order exact, since two jobs can share a millisecond.
 local function ready_score(priority)
   local seq = redis.call('INCR', P .. 'seq')
   return string.format('%.0f', (9 - tonumber(priority)) * 1e14 + seq)

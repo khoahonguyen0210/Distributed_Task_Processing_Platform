@@ -1,9 +1,10 @@
-# Private planning notes
+# Local notes
 project-context/
 project_context/
 
 # Environments and interpreter pins
 .venv/
+.venv*/
 venv/
 env/
 ENV/
@@ -17,13 +18,34 @@ __pypackages__/
 .pdm-build/
 Pipfile
 Pipfile.lock
+uv.lock
+poetry.lock
 
 # Reference clones
 research/reference_repos/
 
+# Model files
+models/
+*.gguf
+*.safetensors
+*.onnx
+
+# Cluster and container files
+kubeconfig
+*.kubeconfig
+.kube/
+charts/
+*.tgz
+*.tar
+*.tar.gz
+.terraform/
+*.tfstate
+*.tfstate.*
+
 # Generated output
 output/
 *.log
+*.pid
 *.rdb
 *.aof
 appendonlydir/
@@ -58,23 +80,19 @@ htmlcov/
 .nox/
 .hypothesis/
 .cache/
+.benchmarks/
 
 # Notebooks
 .ipynb_checkpoints/
 
-# Editors and AI tools
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.cursor/
-.cursorignore
-.cursorindexingignore
-.claude/
-CLAUDE.md
-AGENTS.md
-.aider*
+*.code-workspace
+.history/
 
 # Operating system
 .DS_Store

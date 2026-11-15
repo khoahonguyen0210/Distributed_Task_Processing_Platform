@@ -1,4 +1,4 @@
-from app.jobs import handlers as _handlers  # noqa: F401  (registers the built-in job types)
+from app.jobs import handlers
 from app.jobs.registry import (
     REGISTRY,
     JobContext,
@@ -16,5 +16,6 @@ __all__ = [
     "PermanentJobError",
     "UnknownJobTypeError",
     "get_spec",
+    "handlers",
     "validate_payload",
 ]

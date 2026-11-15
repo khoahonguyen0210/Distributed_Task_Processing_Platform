@@ -76,9 +76,12 @@ def get_job(job_id: JobId, request: Request) -> JobDetail:
     return JobDetail.of(job)
 
 
-@router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=JobOut,
+    description="Cancels a job that has not started. Running or finished jobs cannot be cancelled.",
+)
 def cancel_job(job_id: JobId, request: Request) -> JobOut:
-    """Cancels a job that has not started. Running and finished jobs cannot be cancelled."""
     queue = get_queue(request)
     cancelled, state = queue.cancel(job_id)
     if state is None:
@@ -100,9 +103,12 @@ def list_dead_letters(
     return JobList(jobs=[JobOut.of(j) for j in jobs], limit=limit, offset=offset)
 
 
-@router.post("/dead-letters/{job_id}/replay", response_model=JobOut)
+@router.post(
+    "/dead-letters/{job_id}/replay",
+    response_model=JobOut,
+    description="Queues a dead-letter job again with a fresh attempt count. Its history is kept.",
+)
 def replay_dead_letter(job_id: JobId, request: Request) -> JobOut:
-    """Queues a dead-letter job again with a fresh attempt count. Its history is kept."""
     queue = get_queue(request)
     if not queue.replay(job_id):
         job = queue.get(job_id, with_history=False)

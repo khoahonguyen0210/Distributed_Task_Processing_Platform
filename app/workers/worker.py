@@ -21,7 +21,6 @@ log = logging.getLogger("taskq.worker")
 
 
 def describe_error(exc: BaseException) -> str:
-    """A short message for clients. Payload values and stack traces are left out."""
     if isinstance(exc, ValidationError):
         parts = [f"{'.'.join(map(str, e['loc'])) or 'payload'}: {e['msg']}" for e in exc.errors()]
         return "Invalid payload: " + "; ".join(parts)
@@ -32,8 +31,6 @@ def describe_error(exc: BaseException) -> str:
 
 
 class Worker:
-    """One OS process. Each of its `concurrency` threads runs one job at a time."""
-
     def __init__(
         self,
         queue: RedisQueue,
@@ -54,8 +51,6 @@ class Worker:
         self.processed = 0
         self.failures = 0
 
-    # Lifecycle
-
     def stop(self) -> None:
         self.stopping.set()
 
@@ -67,7 +62,6 @@ class Worker:
 
         house = threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True)
         house.start()
-        # Daemon threads, so a job stuck past the grace period cannot keep the process alive.
         slots = [
             threading.Thread(target=self._slot_loop, name=f"slot-{n}", daemon=True)
             for n in range(self.concurrency)
@@ -116,8 +110,6 @@ class Worker:
                     "could not release job; its lease will expire", extra={"job_id": job.id}
                 )
 
-    # Background work: heartbeats, lease renewal, and queue maintenance
-
     def _heartbeat(self) -> None:
         with self._lock:
             active = list(self._active.values())
@@ -159,8 +151,6 @@ class Worker:
             except redis.RedisError as exc:
                 log.error("housekeeping failed: %s", exc, extra={"worker_id": self.id})
 
-    # Running jobs
-
     def _slot_loop(self) -> None:
         pause = 0.5
         while not self.stopping.is_set():
@@ -189,7 +179,6 @@ class Worker:
             self.failures += int(failed)
 
     def execute(self, job: Job) -> str | None:
-        """Runs one claimed job and records the outcome. Returns the new state, or None."""
         extra: dict[str, Any] = {
             "job_id": job.id,
             "job_type": job.type,

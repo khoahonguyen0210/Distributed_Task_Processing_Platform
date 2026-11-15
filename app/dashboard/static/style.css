@@ -14,7 +14,6 @@
   --on-ink: #fdfaf1;
   --serif: "Times New Roman", Times, serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  /* Every text size on the page is one of these. */
   --fs-small: 14px;
   --fs-body: 18px;
   --fs-large: 24px;
@@ -94,8 +93,6 @@ h3 {
 .ok-text { color: var(--ok); }
 .bad-text { color: var(--accent); }
 
-/* Top bar */
-
 .bar {
   position: fixed;
   inset: 0 0 auto;
@@ -144,8 +141,6 @@ a.pill:hover, button.pill:hover { background: var(--pill-hover); }
 
 main { padding: 0 var(--gutter); }
 
-/* Summary */
-
 .hero {
   position: relative;
   min-height: max(620px, 100svh);
@@ -160,7 +155,6 @@ main { padding: 0 var(--gutter); }
     radial-gradient(80% 80% at 60% 60%, #2b2620, transparent 80%),
     #191714;
 }
-/* Fine grain, so the dark area reads like a photo instead of a flat fill. */
 .hero::after {
   content: "";
   position: absolute;
@@ -221,8 +215,6 @@ main { padding: 0 var(--gutter); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Main grid */
-
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
@@ -263,8 +255,6 @@ main { padding: 0 var(--gutter); }
 .select-pill:focus-within { outline: 2px solid var(--text); outline-offset: 2px; }
 .select-pill select:focus { outline: none; }
 
-/* Jobs table */
-
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 16px 16px 16px 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
@@ -295,8 +285,6 @@ tr.flash { animation: flash 1.4s ease-out; }
 .s-queued::before { background: transparent; border: 1.5px solid var(--text); }
 .s-scheduled::before { background: transparent; border: 1.5px dashed var(--muted); }
 .s-cancelled { color: var(--muted); text-decoration: line-through; }
-
-/* Form */
 
 .form { display: flex; flex-direction: column; gap: 16px; }
 .form label { display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-small); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted); flex: 1; min-width: 0; }
@@ -332,8 +320,6 @@ input:focus, .form select:focus, textarea:focus { outline: none; border-bottom-c
 .button:disabled { opacity: 0.5; cursor: default; }
 .button:focus-visible, .pill:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
-/* Workers */
-
 .workers { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
 .workers li {
   display: grid;
@@ -349,8 +335,6 @@ input:focus, .form select:focus, textarea:focus { outline: none; border-bottom-c
 .workers .stale::before { background: var(--accent); }
 .workers .meta { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-small); }
 
-/* Footer */
-
 .foot {
   display: flex;
   justify-content: space-between;
@@ -361,8 +345,6 @@ input:focus, .form select:focus, textarea:focus { outline: none; border-bottom-c
   font-size: var(--fs-small);
   color: var(--muted);
 }
-
-/* Job detail sheet */
 
 dialog {
   margin: 0 0 0 auto;

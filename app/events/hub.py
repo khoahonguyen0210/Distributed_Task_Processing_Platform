@@ -12,8 +12,6 @@ RESYNC = json.dumps({"type": "resync"})
 
 
 class Subscriber:
-    """One browser connection. If it falls behind, old events are dropped and it must resync."""
-
     def __init__(self, size: int) -> None:
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=size)
 
@@ -30,12 +28,6 @@ class Subscriber:
 
 
 class EventHub:
-    """Reads job events from Redis Pub/Sub once and copies them to every subscriber.
-
-    Pub/Sub keeps nothing: events sent while the hub is disconnected are lost.
-    After a reconnect every subscriber gets a resync message and reloads state from the API.
-    """
-
     def __init__(self, redis_url: str, channel: str, buffer_size: int = 256) -> None:
         self.redis_url = redis_url
         self.channel = channel

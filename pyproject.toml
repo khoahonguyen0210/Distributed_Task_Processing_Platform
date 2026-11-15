@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taskq"
-version = "1.0.0"
+version = "1.1.0"
 description = "A small Redis-backed task queue with workers, retries, and a live dashboard."
 readme = "README.md"
 license = "MIT"
@@ -52,7 +52,6 @@ python_version = "3.12"
 strict = true
 packages = ["app", "scripts"]
 
-# redis-py types every call as "sync or async", which hides real errors in noise.
 [[tool.mypy.overrides]]
 module = ["redis", "redis.*"]
 follow_imports = "skip"

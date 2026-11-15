@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
@@ -27,10 +29,33 @@ def test_metrics_reflect_queue(queue: RedisQueue, settings: Settings) -> None:
 
     with TestClient(create_app(settings, queue)) as client:
         m = client.get("/api/metrics").json()
-        assert m["queue"] == {"ready": 2, "scheduled": 0, "running": 0, "dead_letter": 0}
+        assert m["queue"] == {
+            "ready": 2,
+            "scheduled": 0,
+            "running": 0,
+            "dead_letter": 0,
+            "due": 0,
+        }
+        assert m["backlog"] == 2
         assert m["totals"]["submitted"] == 3 and m["totals"]["succeeded"] == 1
         assert m["job_duration_ms"]["p50"] == 40 and m["job_duration_ms"]["samples"] == 1
 
         text = client.get("/metrics").text
         assert 'taskq_queue_jobs{queue="ready"} 2' in text
         assert 'taskq_job_duration_ms{quantile="0.95"} 40.0' in text
+
+
+def test_backlog_counts_work_that_needs_a_worker_now(queue: RedisQueue, settings: Settings) -> None:
+    queue.enqueue("add", {"a": 1, "b": 1})
+    queue.enqueue("add", {"a": 1, "b": 1})
+    assert queue.claim("w") is not None
+    queue.enqueue("add", {"a": 1, "b": 1}, delay_seconds=0.05)
+    queue.enqueue("add", {"a": 1, "b": 1}, delay_seconds=600)
+    time.sleep(0.1)
+
+    with TestClient(create_app(settings, queue)) as client:
+        m = client.get("/api/metrics").json()
+        assert m["queue"]["ready"] == 1 and m["queue"]["running"] == 1
+        assert m["queue"]["scheduled"] == 2 and m["queue"]["due"] == 1
+        assert m["backlog"] == 3
+        assert "taskq_backlog_jobs 3" in client.get("/metrics").text

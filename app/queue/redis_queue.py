@@ -42,8 +42,6 @@ def new_job_id() -> str:
 
 
 class RedisQueue:
-    """All job state lives in Redis. Every change of state is one Lua script, so it is atomic."""
-
     SCRIPTS = (
         "enqueue",
         "claim",
@@ -86,8 +84,6 @@ class RedisQueue:
     def ping(self) -> bool:
         return bool(self.r.ping())
 
-    # Submitting and reading jobs
-
     def enqueue(
         self,
         job_type: str,
@@ -129,7 +125,6 @@ class RedisQueue:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
-        """Newest first. Filters scan at most `list_scan_limit` recent jobs."""
         index = self.key("jobs")
         found: list[Job] = []
         skipped = 0
@@ -164,8 +159,6 @@ class RedisQueue:
         ids = self.r.zrevrange(self.key("dead"), offset, offset + limit - 1)
         jobs = [self.get(job_id, with_history=False) for job_id in ids]
         return [job for job in jobs if job is not None]
-
-    # Worker side
 
     def claim(self, worker_id: str) -> Job | None:
         token = secrets.token_hex(16)
@@ -209,8 +202,6 @@ class RedisQueue:
     def wait_for_work(self, timeout: float) -> None:
         self.r.blpop([self.key("wake")], timeout=timeout)
 
-    # Maintenance and admin
-
     def promote_due(self, batch: int = 100) -> int:
         return int(self._run("promote", batch))
 
@@ -218,11 +209,8 @@ class RedisQueue:
         return int(self._run("recover", batch, self.s.dead_letter_ttl_seconds))
 
     def trim_indexes(self) -> int:
-        """Drops index entries whose jobs have surely expired. Returns how many were removed."""
         now = time.time()
-        # A dead-letter job expires exactly dead_letter_ttl after it entered the list.
         dead_cutoff = now - self.s.dead_letter_ttl_seconds
-        # Any job is gone this long after it was created: longest delay, then longest TTL.
         ttl = max(self.s.job_ttl_seconds, self.s.dead_letter_ttl_seconds)
         jobs_cutoff = now - MAX_DELAY_SECONDS - ttl - 3600
         pipe = self.r.pipeline(transaction=False)
@@ -231,7 +219,6 @@ class RedisQueue:
         return int(sum(pipe.execute()))
 
     def cancel(self, job_id: str) -> tuple[bool, str | None]:
-        """Returns (True, "cancelled"), (False, current state), or (False, None) if missing."""
         outcome = self._run("cancel", job_id, self.s.job_ttl_seconds)
         if outcome == 1:
             return True, "cancelled"
@@ -241,11 +228,14 @@ class RedisQueue:
         return bool(self._run("replay", job_id))
 
     def stats(self) -> dict[str, int]:
+        seconds, micros = self.r.time()
+        now_ms = int(seconds) * 1000 + int(micros) // 1000
         pipe = self.r.pipeline(transaction=False)
         pipe.hgetall(self.key("stats"))
         for name in ("ready", "scheduled", "leases", "dead"):
             pipe.zcard(self.key(name))
-        counters, ready, scheduled, running, dead = pipe.execute()
+        pipe.zcount(self.key("scheduled"), "-inf", now_ms)
+        counters, ready, scheduled, running, dead, due = pipe.execute()
         totals = {
             name: int(counters.get(name, 0))
             for name in (
@@ -265,9 +255,8 @@ class RedisQueue:
             "scheduled": scheduled,
             "running": running,
             "dead_letter": dead,
+            "due": due,
         }
-
-    # Worker registry
 
     def worker_heartbeat(self, worker_id: str, info: dict[str, str | int]) -> None:
         now = int(time.time() * 1000)
@@ -282,7 +271,6 @@ class RedisQueue:
         self.r.delete(self.key(f"worker:{worker_id}"))
 
     def prune_workers(self) -> int:
-        """Forgets long-silent workers. Recently stale ones stay visible."""
         cutoff = int((time.time() - self.s.worker_stale_seconds * 4) * 1000)
         return int(self.r.zremrangebyscore(self.key("workers"), "-inf", cutoff))
 

@@ -1,5 +1,3 @@
--- ARGV: prefix, id, lease_token, error, retryable (0/1), retry_delay_ms, job_ttl, dead_ttl, duration_ms
--- Returns 'retry', 'dead', 'failed', or false when the caller no longer holds the lease.
 local id, token, err = ARGV[2], ARGV[3], ARGV[4]
 local retryable, delay = ARGV[5] == '1', tonumber(ARGV[6])
 local job_ttl, dead_ttl, duration = tonumber(ARGV[7]), tonumber(ARGV[8]), ARGV[9]

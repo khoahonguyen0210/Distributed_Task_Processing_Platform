@@ -1,4 +1,3 @@
--- ARGV: prefix, id, type, payload, priority, max_attempts, delay_ms
 local id, jtype, payload = ARGV[2], ARGV[3], ARGV[4]
 local priority, max_attempts, delay = ARGV[5], ARGV[6], tonumber(ARGV[7])
 local key = job_key(id)

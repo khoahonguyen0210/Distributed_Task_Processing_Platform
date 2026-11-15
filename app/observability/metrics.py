@@ -5,7 +5,6 @@ from app.queue.redis_queue import RedisQueue
 
 
 def percentile(values: list[int] | list[float], pct: float) -> float | None:
-    """Nearest-rank percentile. Returns None for an empty list."""
     if not values:
         return None
     ordered = sorted(values)
@@ -24,7 +23,9 @@ def collect(queue: RedisQueue) -> dict[str, Any]:
             "scheduled": stats["scheduled"],
             "running": stats["running"],
             "dead_letter": stats["dead_letter"],
+            "due": stats["due"],
         },
+        "backlog": stats["ready"] + stats["running"] + stats["due"],
         "totals": {k.removeprefix("total_"): v for k, v in stats.items() if k.startswith("total_")},
         "workers": {"alive": alive, "stale": len(workers) - alive},
         "job_duration_ms": {
@@ -52,6 +53,12 @@ def prometheus_text(m: dict[str, Any]) -> str:
         "gauge",
         "Jobs currently in each queue structure.",
         [(f'{{queue="{k}"}}', v) for k, v in m["queue"].items()],
+    )
+    metric(
+        "taskq_backlog_jobs",
+        "gauge",
+        "Jobs that need a worker now: ready, running, and scheduled jobs that are due.",
+        [("", m["backlog"])],
     )
     metric(
         "taskq_jobs_total",

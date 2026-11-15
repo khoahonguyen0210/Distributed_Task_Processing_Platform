@@ -18,12 +18,14 @@ def test_prometheus_text_skips_missing_values() -> None:
     text = prometheus_text(
         {
             "queue": {"ready": 2},
+            "backlog": 3,
             "totals": {"succeeded": 5},
             "workers": {"alive": 1, "stale": 0},
             "job_duration_ms": {"samples": 0, "p50": None, "p95": None},
         }
     )
     assert 'taskq_queue_jobs{queue="ready"} 2' in text
+    assert "taskq_backlog_jobs 3" in text
     assert 'taskq_jobs_total{event="succeeded"} 5' in text
     assert (
         "quantile" not in text.split("# TYPE taskq_job_duration_ms summary")[1].split("_count")[0]

@@ -4,7 +4,6 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-# Fields passed with `extra=` that are copied into each JSON line.
 _FIELDS = ("event", "job_id", "job_type", "worker_id", "attempt", "state", "duration_ms", "count")
 
 

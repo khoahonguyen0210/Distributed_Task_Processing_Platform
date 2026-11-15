@@ -35,12 +35,16 @@ Only for development:
 | ruff | 0.17.0 | MIT |
 | mypy | 1.20.2 | MIT |
 
-Services:
+Services and tools:
 
 | Service | Version | License | Note |
 |---|---|---|---|
 | Redis server | 7.4.11 (`redis:7.4-alpine`) | RSALv2 / SSPLv1 dual license since 7.4 | Runs as a separate, unmodified container for local use. No Redis code is in this repository |
 | Python image | `python:3.12-slim` | PSF and Debian package licenses | Base image of the app container |
+| kind | 0.33.0, node image `kindest/node:v1.37.0` | Apache-2.0 | Runs the local Kubernetes cluster |
+| Kubernetes | 1.37.0 | Apache-2.0 | Part of the kind node image |
+| KEDA | 2.21.0 (Helm chart `kedacore/keda`) | Apache-2.0 | Scales the workers |
+| Helm | 4.3.2 | Apache-2.0 | Installs KEDA |
 
 ## A note on Redis 7.4
 

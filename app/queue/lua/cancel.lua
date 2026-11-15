@@ -1,6 +1,3 @@
--- ARGV: prefix, id, ttl_seconds
--- Only jobs that are waiting can be cancelled. A running job is never interrupted.
--- Returns 1 on success, the current state if it cannot be cancelled, or false if missing.
 local id, ttl = ARGV[2], tonumber(ARGV[3])
 local key = job_key(id)
 local state = redis.call('HGET', key, 'state')

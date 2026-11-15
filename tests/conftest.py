@@ -1,6 +1,7 @@
 import os
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 import redis
@@ -8,7 +9,6 @@ import redis
 from app.core.config import Settings
 from app.queue.redis_queue import RedisQueue
 
-# Tests use their own database and a random key prefix, so they never touch real data.
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://127.0.0.1:6379/15")
 
 
@@ -19,7 +19,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 def make_settings(**overrides: object) -> Settings:
-    values: dict[str, object] = {
+    values: dict[str, Any] = {
         "redis_url": TEST_REDIS_URL,
         "key_prefix": f"test:{uuid.uuid4().hex[:12]}:",
         "lease_seconds": 2.0,
@@ -33,7 +33,7 @@ def make_settings(**overrides: object) -> Settings:
         "allowed_hosts": ["testserver"],
     }
     values.update(overrides)
-    return Settings(_env_file=None, **values)  # type: ignore[call-arg, arg-type]
+    return Settings(**{"_env_file": None, **values})
 
 
 @pytest.fixture(scope="session")

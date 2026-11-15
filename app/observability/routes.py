@@ -10,15 +10,19 @@ from app.observability.metrics import collect, prometheus_text
 router = APIRouter(tags=["health and metrics"])
 
 
-@router.get("/health/live")
+@router.get(
+    "/health/live",
+    description="The API process is running. Says nothing about Redis or workers.",
+)
 def live() -> dict[str, str]:
-    """The API process is running. Says nothing about Redis or workers."""
     return {"status": "ok"}
 
 
-@router.get("/health/ready")
+@router.get(
+    "/health/ready",
+    description="503 when Redis cannot be reached. 'degraded' means no worker is alive.",
+)
 def ready(request: Request) -> JSONResponse:
-    """503 when Redis cannot be reached. 'degraded' means Redis is fine but no worker is alive."""
     queue = get_queue(request)
     try:
         queue.ping()

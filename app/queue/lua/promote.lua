@@ -1,5 +1,3 @@
--- ARGV: prefix, batch_size
--- Moves delayed and retry jobs whose time has come into the ready set.
 local batch = tonumber(ARGV[2])
 local now = now_ms()
 local due = redis.call('ZRANGEBYSCORE', SCHEDULED, '-inf', now, 'LIMIT', 0, batch)

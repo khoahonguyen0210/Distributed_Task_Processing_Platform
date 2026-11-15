@@ -1,9 +1,3 @@
-"""Checks a running stack from the outside: health, one job, one retry, one rejection.
-
-Usage: python scripts/smoke_test.py [base_url]
-Needs only the Python standard library.
-"""
-
 import json
 import sys
 import time
@@ -29,9 +23,9 @@ def call(method: str, path: str, body: dict[str, Any] | None = None) -> tuple[in
 def wait_for(job_id: str, states: set[str], timeout: float = 30) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        _, job = call("GET", f"/api/jobs/{job_id}")
+        job: dict[str, Any] = call("GET", f"/api/jobs/{job_id}")[1]
         if job["state"] in states:
-            return job  # type: ignore[no-any-return]
+            return job
         time.sleep(0.2)
     raise SystemExit(f"job {job_id} did not reach {states} in {timeout} s")
 

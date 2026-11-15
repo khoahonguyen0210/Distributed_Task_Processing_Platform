@@ -10,7 +10,6 @@ router = APIRouter()
 
 
 def same_origin(websocket: WebSocket) -> bool:
-    """Blocks other websites from reading the stream through a visitor's browser."""
     origin = websocket.headers.get("origin")
     if origin is None:
         return True

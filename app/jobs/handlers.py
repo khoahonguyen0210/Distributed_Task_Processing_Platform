@@ -1,5 +1,3 @@
-"""Built-in job types. They are safe, bounded, and give the same result when run twice."""
-
 import time
 
 from pydantic import BaseModel, ConfigDict, Field

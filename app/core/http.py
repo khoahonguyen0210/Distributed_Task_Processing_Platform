@@ -6,8 +6,6 @@ BODY_METHODS = {"POST", "PUT", "PATCH"}
 
 
 class BodyLimit:
-    """Refuses large request bodies before they are read into memory."""
-
     def __init__(self, app: ASGIApp, limit: int) -> None:
         self.app = app
         self.limit = limit

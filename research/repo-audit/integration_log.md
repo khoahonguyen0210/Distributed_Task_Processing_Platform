@@ -61,6 +61,51 @@ Last full local run: 94 tests passed, and Ruff and mypy (strict) reported no iss
 
 The API has no sign-in on purpose, because it is meant for local use. This review is a careful check by hand, not a professional audit.
 
+## Autoscaling on Kubernetes (2026-11-15)
+
+This part adds a local Kubernetes cluster, where KEDA starts and stops workers based on the queue. The queue itself did not change.
+
+### Facts recorded before the work
+
+| Question | Answer |
+|---|---|
+| How are waiting, delayed, running, and dead jobs stored? | Four Redis sorted sets: `ready` (by priority, then order), `scheduled` (by due time), `leases` (by lease end), and `dead` (by time of death) |
+| How was queue size shown? | `/api/metrics` (JSON) and `/metrics` (Prometheus text) gave the size of each set. No Prometheus server ran |
+| What is the longest job? | `sleep` allows 30 s. `cpu` at its limit (5,000,000 steps) took 0.44 s on this laptop |
+| What does Docker give the cluster? | 16 CPUs and 7.6 GiB of memory. A kind cluster from another project used about 4.3 GiB of that the whole time |
+
+### Choices
+
+| Choice | Why | Other options |
+|---|---|---|
+| kind with one node | Free, runs in Docker, and is easy to delete | Docker Desktop's own Kubernetes, minikube |
+| KEDA's Metrics API scaler, reading `backlog` from the API | The ready queue is a sorted set, and the Redis Lists scaler only reads the length of a list | Redis Lists scaler (does not fit), Prometheus scaler (needs a Prometheus server) |
+| Count ready, running, and due delayed jobs | Workers also take back expired leases and move due jobs. With zero workers, nobody else would | Ready jobs only |
+| 0 to 5 workers, 1 job per worker | Matches the earlier 1, 3, and 5 worker benchmark | Higher limits, which one laptop cannot use well |
+| 35 s shutdown wait, 45 s grace period | The longest job is 30 s, so a removed worker can finish it | Shorter waits that cut jobs off |
+| `restricted` Pod Security and a network policy for Redis | Containers get no extra rights, and only the API and workers can reach Redis | No limits |
+
+### Problems found and fixed
+
+| Problem | How it was found | Fix |
+|---|---|---|
+| `kind load docker-image` failed with `content digest ... not found` | First image load | `docker save --platform linux/amd64`, then `kind load image-archive` |
+| Kubernetes health probes send the pod IP as the host name, which the API refuses | Reading the host check before writing the probes | The probes send `Host: localhost`. The cluster name of the API is added to `ALLOWED_HOSTS` |
+| The laptop went to sleep in the middle of a check, so one poll took 26 minutes | Timestamps in the output, then the Windows event log | The benchmark measures the gap between samples and runs a trial again if a gap is over 5 s |
+| `kubectl port-forward` dropped connections when the benchmark read 120 jobs every 2 s | The first benchmark run stopped with `Server disconnected` | The benchmark waits on the API's job counters and reads each job once at the end. Requests are retried |
+| The benchmark summary treated a time of 0 as "no time" | A unit test | Checks now use `is not None` |
+| One trial had a 14 s pause between two samples | The gap check in the benchmark | The trial was run again. All other trials had no pause |
+
+### Checks
+
+| Check | Result |
+|---|---|
+| 20 jobs sent to an empty queue | Workers went from 0 to 5 within 6 s. All 20 jobs succeeded. Workers went back to 0 after the queue was empty |
+| `chaos_test.py worker-scale-down` | 5 of 5 jobs succeeded on their first try while 4 of 5 workers were stopped |
+| `chaos_test.py worker-kill` | The killed worker's job was taken back and succeeded on its second try |
+| Network policy | A pod in another namespace could not reach Redis. The API could |
+| `burst_benchmark.py`, 3 trials each of KEDA and 1, 3, and 5 fixed workers | 1,440 of 1,440 jobs succeeded, none twice. KEDA finished a 120-job burst in 32.9 s (median) with 239 worker-seconds. 5 fixed workers took 24.1 s and 1,000 worker-seconds. Full table in `docs/kubernetes.md` |
+
 ## Not checked yet
 
 - A full passing run of the GitHub Actions workflow has not been confirmed yet.
@@ -81,4 +126,5 @@ The API has no sign-in on purpose, because it is meant for local use. This revie
 | Benchmark | `scripts/benchmark.py`, `benchmarks/results/` | Measured on one laptop |
 | CI | `.github/workflows/ci.yml` | Written. A full passing run is not confirmed yet |
 | Security | README "Privacy and security", `tests/unit/test_http_limits.py`, the package scan | Checked by hand and tested. Not an audit |
-| AWS, Terraform, Kubernetes | None | Not part of this project |
+| Kubernetes and KEDA | `infra/`, `docs/kubernetes.md`, `scripts/chaos_test.py`, `scripts/burst_benchmark.py` | Run on a local kind cluster |
+| AWS, Terraform | None | Not part of this project |

@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from app.core.config import Settings
-from app.queue.models import TERMINAL_STATES, JobState
+from app.queue.models import TERMINAL_STATES, Job, JobState
 from app.queue.redis_queue import RedisQueue
 from app.workers.worker import Worker
 
@@ -32,7 +32,7 @@ def finished(queue: RedisQueue, *ids: str) -> Callable[[], bool]:
 
 @contextmanager
 def running_worker(queue: RedisQueue, settings: Settings, **kwargs: object) -> Iterator[Worker]:
-    worker = Worker(queue, settings, **kwargs)  # type: ignore[arg-type]
+    worker = Worker(queue, settings, **kwargs)
     thread = threading.Thread(target=worker.run, daemon=True)
     thread.start()
     try:
@@ -56,7 +56,7 @@ def test_worker_drives_jobs_to_the_right_end_state(queue: RedisQueue, settings: 
             finished(queue, add.id, flaky.id, doomed.id, bad.id, invalid.id, unknown.id)
         )
 
-    def get(job_id: str):  # type: ignore[no-untyped-def]
+    def get(job_id: str) -> Job:
         job = queue.get(job_id)
         assert job is not None
         return job

@@ -22,8 +22,6 @@ class SubmitJob(BaseModel):
 
 
 class JobOut(BaseModel):
-    """Times are Unix time in milliseconds, taken from the Redis server clock."""
-
     id: str
     type: str
     state: JobState

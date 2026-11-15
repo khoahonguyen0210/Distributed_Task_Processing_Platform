@@ -1,13 +1,3 @@
-"""Measures throughput and latency with 1, 3, and 5 workers.
-
-Run from the project root:
-    python -m scripts.benchmark --workers 1 3 5 --trials 3
-
-Each trial starts fresh worker processes against its own key prefix, runs a short
-warm-up, submits all jobs at once, and waits until every job has finished.
-Times come from the Redis server clock, so all processes share one clock.
-"""
-
 import argparse
 import csv
 import json
@@ -21,6 +11,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +67,6 @@ class TrialSummary:
 
 
 def job_rows(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Adds latency columns. Jobs that never started or finished get None."""
     rows = []
     for job in jobs:
         created, started, finished = job["created_at"], job["started_at"], job["finished_at"]
@@ -168,9 +158,6 @@ def markdown_table(rows: list[dict[str, Any]]) -> str:
     return head + "\n".join(lines) + "\n"
 
 
-# Running trials
-
-
 def environment(client: redis.Redis) -> dict[str, Any]:
     info = client.info("server")
     return {
@@ -180,12 +167,11 @@ def environment(client: redis.Redis) -> dict[str, Any]:
         "cpu_count": os.cpu_count(),
         "python": platform.python_version(),
         "redis": info.get("redis_version"),
-        "project_version": "1.0.0",
+        "project_version": metadata.version("taskq"),
     }
 
 
 def start_workers(model: str, count: int, env: dict[str, str]) -> list[subprocess.Popen[bytes]]:
-    # mypy checks one platform at a time and understands sys.platform, not os.name.
     if sys.platform == "win32":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -240,7 +226,8 @@ def run_trial(
     client: redis.Redis, args: argparse.Namespace, workload: str, model: str, workers: int
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     prefix = f"bench:{uuid.uuid4().hex[:10]}:"
-    settings = Settings(_env_file=None, redis_url=args.redis_url, key_prefix=prefix)  # type: ignore[call-arg]
+    options: dict[str, Any] = {"_env_file": None, "redis_url": args.redis_url, "key_prefix": prefix}
+    settings = Settings(**options)
     queue = RedisQueue(client, settings)
     env = {**os.environ, "REDIS_URL": args.redis_url, "KEY_PREFIX": prefix, "LOG_LEVEL": "WARNING"}
     procs = start_workers(model, workers, env)
@@ -284,7 +271,9 @@ def run_trial(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Measure throughput and latency with 1, 3, and 5 workers."
+    )
     parser.add_argument("--workers", type=int, nargs="+", default=[1, 3, 5])
     parser.add_argument(
         "--workloads", nargs="+", choices=sorted(WORKLOADS), default=["sleep", "cpu"]

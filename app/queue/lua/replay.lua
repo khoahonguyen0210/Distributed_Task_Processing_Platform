@@ -1,6 +1,3 @@
--- ARGV: prefix, id
--- Sends a dead-letter job back to the queue with a fresh attempt count.
--- The last error and the full history are kept.
 local id = ARGV[2]
 local key = job_key(id)
 if redis.call('HGET', key, 'state') ~= 'dead_letter' then return 0 end
