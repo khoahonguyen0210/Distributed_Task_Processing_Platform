@@ -1,6 +1,6 @@
 # Language Model Jobs
 
-This page puts a small language model behind the queue. A job of type `llm_generate` asks the model for text. The model runs in its own pods, called model servers, and KEDA adds or removes them as load changes. Everything runs on one laptop, with no cloud and no paid service.
+This page connects a small language model to the queue. A job of type `llm_generate` asks the model for text. The model runs in its own pods, called model servers, and KEDA adds or removes them as the number of requests changes. Everything runs on one laptop, with no cloud and no paid service.
 
 ## What runs
 
@@ -71,9 +71,9 @@ The temperature is always 0, and the worker never runs anything from the prompt.
 | Any other 4xx status | The job fails at once. Trying again would get the same answer |
 | An answer that cannot be read | The job is tried again |
 
-Each `llm_generate` job has a deadline of 300 s, unless the request sets `deadline_seconds`. If no worker has started the job by then, it goes to the `expired` state and never reaches the model server. Late answers are often useless, and running them would only slow down the jobs behind them.
+Each `llm_generate` job has a deadline of 300 s, unless the request sets `deadline_seconds`. If no worker has started the job by then, it goes to the `expired` state and never reaches the model server. Late answers are often useless, and running them would only delay the jobs that wait after them.
 
-## Admission control
+## Queue limit
 
 When the ready queue holds `MAX_QUEUE_DEPTH` jobs, the API refuses new jobs with `429 Too Many Requests` and a `Retry-After` header. The check and the insert are one Redis step. The Kubernetes setup uses `MAX_QUEUE_DEPTH=3`, worked out from measurements:
 
@@ -97,10 +97,10 @@ KEDA turns two Prometheus queries into scaling targets. Kubernetes reads them ab
 
 | Setting | Value | Why |
 |---|---|---|
-| `minReplicaCount` | 1 | Loading the model took 23 s from a cold start, too slow for a first request |
+| `minReplicaCount` | 1 | Loading the model took 23 s on a first start, too slow for a first request |
 | `maxReplicaCount` | 2 | See "How many model servers fit" below |
 | Scale up | At once | A burst needs servers quickly |
-| Scale down | After 120 s without need | Avoids stopping a server that the next burst needs again |
+| Scale down | After 120 s below both targets | Avoids stopping a server that the next burst needs again |
 
 Workers keep their own scaler from [`kubernetes.md`](kubernetes.md), with a target of 2 jobs per worker, because each worker now runs 2 jobs at once. A worker waits up to 130 s for a running job when it is removed, since a model request can take 120 s.
 
@@ -140,7 +140,7 @@ Measured on 2026-11-16 on one laptop (Intel i7-1260P, 16 CPUs and 7.6 GiB given 
 |---|---|
 | Shape | 15 s with no jobs, then 0.4 jobs per second for 60 s (24 jobs), measured for 240 s |
 | Each job | One of 12 fixed prompts, at most 64 tokens (61 on average), deadline 60 s |
-| Workers | 3 pods, 2 jobs at a time each, so at most 6 requests in flight |
+| Workers | 3 pods, 2 jobs at a time each, so at most 6 requests at once |
 | Queue limit | 3 when on |
 | Trials | 2 of each mode. All 5 modes ran once, then all 5 ran again |
 
@@ -156,8 +156,8 @@ Each number is the median of the 2 trials, which is their average:
 
 - **No job was lost.** 240 jobs were sent: 1 was refused with `429`, and the other 239 succeeded on their first try. None expired, failed, or went to the dead-letter list.
 - **A second model server did not make jobs faster on this laptop.** Fixed 2 had a higher p95 than fixed 1 in both trials (27.8 s against 15.9 s, and 16.3 s against 4.4 s). This matches "How many model servers fit" above.
-- **KEDA used about 28% less server time than 2 fixed servers** (345 and 338 server-seconds against 480). In trial 1 of both KEDA modes, it asked for a second server 29 s and 44 s into the burst, and the server was ready 18 s and 19 s later, after loading the model. That is near the end of a 60 s burst. In trial 2, one server kept up, and KEDA added none.
-- **The queue limit rarely acted.** With at most 6 requests in flight, only 1 of 240 jobs found the queue full. With the limit off, the slowest trial of the whole run (fixed 2, trial 2) had jobs waiting 57 s in the queue (p95), close to their 60 s deadline. With the limit on, the queue cannot grow past 3 jobs, so a client would have been told at once to try again later.
+- **KEDA used about 28% less server time than 2 fixed servers** (345 and 338 server-seconds against 480). In trial 1 of both KEDA modes, it asked for a second server 29 s and 44 s into the burst, and the server was ready 18 s and 19 s later, after loading the model. That is near the end of a 60 s burst. In trial 2, one server was fast enough, and KEDA added none.
+- **The queue limit was rarely reached.** With at most 6 requests at once, only 1 of 240 jobs found the queue full. With the limit off, the slowest trial of the whole run (fixed 2, trial 2) had jobs waiting 57 s in the queue (p95), close to their 60 s deadline. With the limit on, the queue cannot grow past 3 jobs, so a client would have been told at once to try again later.
 
 ### Why the trials differ so much
 
@@ -176,10 +176,10 @@ The same mode gave very different times in its two trials. The average time a mo
 | Fixed 2, no limit | 2 | 76.8 s | 29.2 s | 40% | 36.0% | 645 |
 | KEDA, no limit | 2 | 4.4 s | 3.0 s | 59% | 1.5% | 98 |
 
-The node logs started during trial 2, so trial 1 has no memory numbers. Two causes stand out:
+The node logs started during trial 2, so trial 1 has no memory numbers. There are two likely causes:
 
-1. **Memory.** Docker had 7.6 GiB, and the other project's cluster used about 4.3 GiB of it. The model file is read through the page cache, so when memory runs short, Linux drops model pages and later reads them again from the Windows folder mount. The slowest trial had 36% memory pressure and about 645 major page faults per second. One model server's counters showed 631,061 file pages read again, about 2.4 GB, or the whole model about 5 times. The pod itself never reached its 768 MiB limit.
-2. **CPU speed.** Windows reported the CPU at 40% to 59% of its normal speed while jobs ran, most likely because of heat or power limits. The three fastest trials ran at 57% to 59%, and the five slowest at 40% to 43%. A busy CPU also runs slower, so this alone does not show which one causes the other.
+1. **Memory.** Docker had 7.6 GiB, and the other project's cluster used about 4.3 GiB of it. The model file is read through the page cache, so when memory is low, Linux drops model pages and later reads them again from the Windows folder mount. The slowest trial had 36% memory pressure and about 645 major page faults per second. One model server's counters showed 631,061 file pages read again, about 2.4 GB, or the whole model about 5 times. The pod itself never reached its 768 MiB limit.
+2. **CPU speed.** Windows reported the CPU at 40% to 59% of its normal speed while jobs ran, most likely because of heat or power limits. The three fastest trials ran at 57% to 59%, and the five slowest at 40% to 43%. But a busy CPU also runs slower, so these numbers alone do not show which is the cause.
 
 So the latency columns describe this laptop on this day more than the design. The counts (sent, refused, succeeded, lost), the server-seconds, and the scaling times are the reliable results. Raw data, including the CPU speed and node logs: [`benchmarks/inference/20261116T161227Z/`](../benchmarks/inference/20261116T161227Z/).
 
@@ -203,9 +203,9 @@ The burst was 1 job per second for 60 s, with the queue limit on. Times are coun
 - The second server stopped 108 s and 174 s after the last job finished. The 120 s scale-down window starts only after both triggers are under their targets, and the p95 trigger looks back 1 minute. In trial 1, p95 was far above the 25 s goal, so it stayed high for that extra minute.
 - Trial 1 refused far more jobs, because its single server was slow and the queue stayed full.
 
-Raw data: [`benchmarks/inference/scaling/20261116T170521Z/`](../benchmarks/inference/scaling/20261116T170521Z/). In trial 2, the benchmark saw a 22 s gap in its samples, while `kubectl` waited for the cluster, so it ran that trial again, as it is built to do.
+Raw data: [`benchmarks/inference/scaling/20261116T170521Z/`](../benchmarks/inference/scaling/20261116T170521Z/). In trial 2, the benchmark saw a 22 s gap in its samples, while `kubectl` waited for the cluster, so it ran that trial again, as it is written to do.
 
-## Chaos tests
+## Killing pods during jobs
 
 Both tests ran on the inference setup with `python -m scripts.chaos_test llm-worker-kill model-server-kill`. Each job asked for a 256-token answer. Raw data: [`benchmarks/chaos/20261116T052811Z.json`](../benchmarks/chaos/20261116T052811Z.json).
 
@@ -219,6 +219,6 @@ While the second test sent its 8 jobs, the queue limit refused 38 of the attempt
 ## Limits
 
 - One laptop. Pods share the same cores, and other programs ran at the same time.
-- Windows reported the CPU at 40% to 76% of its normal speed during this work, most likely because of heat or power limits. The same test gave up to five times different speeds at different times, so compare only numbers from the same run.
+- Windows reported the CPU at 40% to 76% of its normal speed during this work, most likely because of heat or power limits. The speed of the same test differed by up to 5 times at different times, so compare only numbers from the same run.
 - Docker had 7.6 GiB of memory, and another project's cluster used about 4.3 GiB of it. Under load, Linux kept dropping model pages and reading them again. Locking the model in memory (`--mlock`) or giving Docker more memory may make the times steadier. Neither was tried here.
-- The model is very small, so its answers are short and simple. The point here is the platform around it, not the quality of the text.
+- The model is very small, so its answers are short and simple. This project is about the platform around it, not the quality of the text.

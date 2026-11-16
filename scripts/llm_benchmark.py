@@ -73,7 +73,7 @@ def prepare(api: Api, args: argparse.Namespace, servers: int | None) -> None:
         return workers_ok and servers_ok and api.alive_workers() == args.workers
 
     if not wait_until(settled, 600, 2):
-        raise TimeoutError("workers or model servers did not settle")
+        raise TimeoutError("the worker or model server count did not become steady")
 
 
 def job_rows(jobs: list[dict[str, Any] | None], ids: list[str]) -> list[dict[str, Any]]:
@@ -243,7 +243,7 @@ def main() -> None:
         "--modes",
         nargs="+",
         default=["fixed-1", "fixed-2", "auto", "fixed-2-open", "auto-open"],
-        help="fixed-N or auto; add -open to turn admission control off",
+        help="fixed-N or auto; add -open to turn the queue limit off",
     )
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--workers", type=int, default=3)

@@ -24,7 +24,7 @@ const CANCELLABLE = new Set(["scheduled", "queued", "retry_scheduled"]);
 const LABELS = {
   add: (p) => `Add ${p.a} + ${p.b}`,
   sleep: (p) => `Wait ${p.seconds} s`,
-  cpu: (p) => `Busy loop, ${Number(p.n).toLocaleString("en-US")} steps`,
+  cpu: (p) => `Loop of ${Number(p.n).toLocaleString("en-US")} steps`,
   flaky: (p) => `Fail ${p.fail_times} ${plural(p.fail_times, "time", "times")}, then succeed`,
   fail: () => "Always fail",
   llm_generate: (p) => `Ask the model, up to ${p.max_tokens ?? 64} tokens`,
@@ -233,7 +233,7 @@ function setHeadline(m) {
   const jobsWord = (count) => plural(count, "job", "jobs");
   let parts;
   if (running + waiting > 0 && alive === 0) {
-    parts = [n(running + waiting), ` ${jobsWord(running + waiting)} waiting, but no worker is on.`];
+    parts = [n(running + waiting), ` ${jobsWord(running + waiting)} waiting, but no worker is running.`];
   } else if (running > 0 && waiting > 0) {
     parts = [n(running), ` ${jobsWord(running)} running, `, n(waiting), " waiting in line."];
   } else if (running > 0) {
@@ -269,7 +269,7 @@ async function loadWorkers() {
   list.forEach((w, i) => workerNumbers.set(w.id, i + 1));
   list.sort((a, b) => Number(b.alive) - Number(a.alive));
   const items = list.map((w) => {
-    const status = w.alive ? w.status || "idle" : "not responding";
+    const status = w.alive ? `${w.status || "idle"} · ` : "";
     const slots = Number(w.concurrency || 1);
     return el(
       "li",
@@ -277,13 +277,13 @@ async function loadWorkers() {
       el("span", { className: "name", textContent: workerName(w.id), title: w.id }),
       el("span", {
         className: w.alive ? "alive" : "alive stale",
-        textContent: w.alive ? "Alive" : "Stale",
+        textContent: w.alive ? "Alive" : "Not responding",
       }),
       el("span", {
         className: "meta",
         textContent:
-          `${status} · ${slots} ${slots === 1 ? "slot" : "slots"} · ` +
-          `${w.processed || 0} run, ${w.failures || 0} failed since start · seen ${ago(w.last_seen)}`,
+          `${status}${slots} ${slots === 1 ? "slot" : "slots"} · ` +
+          `${w.processed || 0} run, ${w.failures || 0} failed since start · last seen ${ago(w.last_seen)}`,
       }),
     );
   });
@@ -437,7 +437,7 @@ function connect(delay = 500) {
   ws.onmessage = (message) => {
     const data = JSON.parse(message.data);
     if (data.type === "hello") {
-      setLink(data.redis ? "ok" : "bad", data.redis ? "Live" : "Redis is down");
+      setLink(data.redis ? "ok" : "bad", data.redis ? "Live" : "Cannot reach Redis");
       delay = 500;
       loadAll();
     } else if (data.type === "resync") {

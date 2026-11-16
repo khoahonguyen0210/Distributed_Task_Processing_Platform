@@ -47,7 +47,7 @@ It comes from a measured baseline, not a guess:
 | Load | 1 job every 10 s for 300 s (30 jobs, 64 tokens each), about a third of what one server can do (0.287 jobs/s) |
 | Result | 30 of 30 succeeded. p50 7.0 s, p95 12.3 s, p99 16.0 s |
 
-The goal is twice the baseline p95, rounded up to the next 5 s. During a burst, a job may also wait about one job time for a free slot, and the doubled value leaves room for that and for the noise on this laptop.
+The goal is twice the baseline p95, rounded up to the next 5 s. During a burst, a job may also wait about one job time for a free slot, and the doubled value leaves room for that and for the uneven speed of this laptop.
 
 An earlier, shorter baseline (180 s, 18 jobs) gave p95 31.1 s. With 18 jobs, p95 is simply the slowest job, so the longer run replaced it. Both runs are in the build notes.
 

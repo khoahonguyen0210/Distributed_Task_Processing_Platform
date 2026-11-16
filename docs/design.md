@@ -24,7 +24,7 @@ Every key starts with `KEY_PREFIX` (default `taskq:`).
 | `worker:{id}` | Hash | Worker details: process ID, slots, status, current jobs, counts |
 | `events` | Pub/Sub channel | One message for each change of state |
 
-A job is in exactly one of `ready`, `scheduled`, `leases`, or `dead` while it is waiting, running, or dead, and in none of them once it has finished or was cancelled.
+A job is in exactly one of `ready`, `scheduled`, `leases`, or `dead` while it is waiting, running, or in the dead-letter list, and in none of them once it has finished or was cancelled.
 
 The ready score is `(9 - priority) * 10^14 + seq`, where `seq` goes up by one each time a job becomes ready. The counter stays below 10^14, so a higher priority always comes first, and jobs with the same priority come in the order they became ready. A timestamp is not enough here, because two jobs can share a millisecond.
 
@@ -35,7 +35,7 @@ Each script runs inside Redis as one step. No other command can run in the middl
 | Script | Called by | Change |
 |---|---|---|
 | `enqueue.lua` | API | New job to `ready` (or to `scheduled` with a delay). Refuses the job when `ready` already holds `MAX_QUEUE_DEPTH` jobs |
-| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. A job whose deadline has passed goes to `expired` instead. Skips IDs of jobs that were deleted or moved on |
+| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. A job whose deadline has passed goes to `expired` instead. Skips IDs of jobs that were deleted or have changed state |
 | `renew.lua` | Worker heartbeat | Moves the lease end forward, only if the token still matches |
 | `complete.lua` | Worker | `running` to `succeeded`, only if the token matches. Adds the job's total time to `latency` and sets the TTL |
 | `fail.lua` | Worker | `running` to `retry_scheduled`, `failed`, or `dead_letter`, only if the token matches |
@@ -51,8 +51,8 @@ All scripts take the time from Redis (`TIME`), so the API, the workers, and the 
 
 1. **A job has at most one owner.** `claim.lua` removes the job from `ready` and creates the lease in the same step, so two workers cannot get the same job.
 2. **Only the owner can finish a job.** Every claim gets a new random token, and `complete`, `fail`, `renew`, and `release` check it. If a worker's lease runs out and the job is taken back, that worker is refused and its result is dropped.
-3. **A running job always has a lease.** If its worker dies, the lease runs out and `recover.lua` takes the job back. Nothing is lost silently.
-4. **Tries are bounded.** A lost run counts as a try, so a job that crashes every worker ends in `dead_letter`. A run stopped by a clean shutdown does not count.
+3. **A running job always has a lease.** If its worker dies, the lease runs out and `recover.lua` takes the job back. No running job is lost.
+4. **Tries are bounded.** A lost run counts as a try, so a job that crashes every worker ends in `dead_letter`. A run stopped by a normal shutdown does not count.
 5. **Finished jobs are deleted later.** Succeeded, failed, cancelled, and expired jobs are deleted after `JOB_TTL_SECONDS`, dead letters after `DEAD_LETTER_TTL_SECONDS`. Workers remove deleted IDs from `dead` and `jobs` every heartbeat.
 6. **A late job does not run.** A job can have a deadline. If no worker has started it by then, `claim.lua` moves it to `expired` and takes the next job. A running job is never stopped by its deadline. A job that must run again after a failure or a lost lease also expires if its deadline has passed by then.
 7. **The queue has a size limit.** When `MAX_QUEUE_DEPTH` is above 0 and `ready` holds that many jobs, `enqueue.lua` refuses new jobs, and the API answers `429 Too Many Requests` with a `Retry-After` header. The check and the insert are one step, so the limit is never passed. `0` turns the limit off.
@@ -62,9 +62,9 @@ All scripts take the time from Redis (`TIME`), so the API, the workers, and the 
 A worker is one process with a fixed number of slots (threads). Each slot claims and runs one job at a time, so a worker never takes more jobs than it can run. One more thread does the background work:
 
 - every 5 s: heartbeat, renew the leases of running jobs, trim expired index entries
-- every 0.5 s: promote due jobs, recover expired leases, forget workers silent for a long time
+- every 0.5 s: promote due jobs, recover expired leases, remove workers that have sent no heartbeat for a long time
 
-Every worker does the background work, so it keeps going as long as one worker is alive. The scripts are safe to run from many workers at once.
+Every worker does the background work, so it continues as long as one worker is running. The scripts are safe to run from many workers at once.
 
 When `WORKER_METRICS_PORT` is set, a worker also serves `/metrics` on that port: its slots, running jobs, and counts of finished and failed jobs. Prometheus reads it in the Kubernetes setup.
 
@@ -77,11 +77,11 @@ Delivery is at least once. A job runs twice when:
 - the worker dies after the handler finished but before `complete.lua` ran, or
 - the handler runs longer than the lease and the worker cannot renew it, for example because Redis was unreachable.
 
-In the second case the first run's result is refused, so only one result is saved, but anything the first run changed outside the queue has already happened. Job code must therefore be safe to run twice (the technical word is idempotent). The built-in job types are: running one twice changes nothing outside the worker. `llm_generate` only asks the model server for text. With temperature 0 the answer is almost always the same, but it can change a little, because the server handles several requests together.
+In the second case the first run's result is refused, so only one result is saved, but anything the first run changed outside the queue has already happened. Job code must therefore be safe to run twice (the technical word is idempotent). The built-in job types are safe: running one twice changes nothing outside the worker. `llm_generate` only asks the model server for text. With temperature 0 the answer is almost always the same, but it can change a little, because the server handles several requests together.
 
 ## Live events
 
-Redis Pub/Sub keeps nothing. The API runs one event hub that reads the `events` channel and copies each message to every open WebSocket. If a browser falls behind by more than 256 messages, its old messages are dropped and it gets a `resync` message instead. If the hub loses Redis, every browser gets a `resync` after it reconnects. On `resync`, and after its own reconnect, the dashboard loads all data again from the API. The API and Redis are the source of truth; events only say that something changed.
+Redis Pub/Sub keeps nothing. The API runs one event hub that reads the `events` channel and copies each message to every open WebSocket. If more than 256 messages wait to be sent to one browser, its old messages are dropped and it gets a `resync` message instead. If the hub loses its connection to Redis, every browser gets a `resync` after the hub connects again. On `resync`, and after its own reconnect, the dashboard loads all data again from the API. The dashboard trusts the data from the API, not the events. Events only say that something changed.
 
 ## Durability
 

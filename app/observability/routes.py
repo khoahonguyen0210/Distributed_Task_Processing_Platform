@@ -12,7 +12,7 @@ router = APIRouter(tags=["health and metrics"])
 
 @router.get(
     "/health/live",
-    description="The API process is running. Says nothing about Redis or workers.",
+    description="The API process is running. Does not check Redis or workers.",
 )
 def live() -> dict[str, str]:
     return {"status": "ok"}

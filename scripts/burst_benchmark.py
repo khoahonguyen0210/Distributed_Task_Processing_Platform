@@ -61,7 +61,7 @@ def prepare(mode: str, api: Api) -> None:
             2,
         )
     if not ok:
-        raise TimeoutError(f"workers did not settle for mode {mode}")
+        raise TimeoutError(f"the worker count did not become steady for mode {mode}")
 
 
 def job_rows(jobs: list[dict[str, Any] | None], ids: list[str]) -> list[dict[str, Any]]:

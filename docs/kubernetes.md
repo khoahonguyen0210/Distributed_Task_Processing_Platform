@@ -1,6 +1,6 @@
 # Kubernetes and Autoscaling
 
-This page runs the project on a local Kubernetes cluster. There, KEDA adds workers when jobs pile up and removes them when the queue is empty. Docker Compose is still the simplest way to run the project. This setup is for trying autoscaling. Nothing here uses a cloud.
+This page runs the project on a local Kubernetes cluster. There, KEDA adds workers when jobs wait and removes them when the queue is empty. Docker Compose is still the simplest way to run the project. This setup is for trying autoscaling. Nothing here uses a cloud.
 
 ## What you need
 
@@ -65,7 +65,7 @@ KEDA wants one worker for each job in the backlog, from 0 up to 5 workers.
 | `pollingInterval` | 5 s | Starts the first worker quickly. Reading the metric is cheap |
 | `cooldownPeriod` | 30 s | Wait after the last job before going back to zero |
 | Scale-down window | 30 s | Kubernetes waits 5 minutes by default. 30 s is enough here, because workers start in a few seconds |
-| `fallback` | 1 worker | If KEDA cannot read the metric 3 times, it keeps 1 worker so jobs still move |
+| `fallback` | 1 worker | If KEDA cannot read the metric 3 times, it keeps 1 worker so jobs still run |
 
 ## Removing workers safely
 
@@ -110,13 +110,13 @@ Measured on 2026-11-15 on one laptop (Intel i7-1260P, 16 CPUs and 7.6 GiB given 
 | Fixed 3 | 360/360 | 40.2 s | 37.8 s | 0 s | 600 |
 | Fixed 5 | 360/360 | 24.1 s | 21.8 s | 0 s | 1,000 |
 
-- KEDA finished 8.8 s after 5 fixed workers, but used 76% less worker time.
+- KEDA took 8.8 s longer than 5 fixed workers, but used 76% less worker time.
 - KEDA finished 7 s before 3 fixed workers, and used 60% less worker time.
 - With no workers running, the first job started about 7 s after the burst. KEDA needs up to 5 s to see the jobs, and then the pod must start.
 - Workers were back to zero about 61 s after the burst began, which is 28 s after the last job finished.
 - No job was lost, failed, or run twice.
 
-Worker-seconds stand in for cost: fixed workers are paid for even when the queue is empty. With longer quiet times between bursts, the gap would grow. Raw data: [`benchmarks/autoscaling/20261115T070731Z/`](../benchmarks/autoscaling/20261115T070731Z/).
+Worker-seconds measure cost: fixed workers are paid for even when the queue is empty. With longer quiet times between bursts, the gap would grow. Raw data: [`benchmarks/autoscaling/20261115T070731Z/`](../benchmarks/autoscaling/20261115T070731Z/).
 
 ## Security
 
@@ -127,5 +127,5 @@ Worker-seconds stand in for cost: fixed workers are paid for even when the queue
 ## Limits
 
 - One node on one laptop. All pods share the same CPU cores.
-- When no worker runs, a new job waits for KEDA to notice it and for a pod to start.
-- Redis is one pod. Its volume lives on the node's disk and is lost with the cluster.
+- When no worker runs, a new job waits for KEDA to see it and for a pod to start.
+- Redis is one pod. Its volume is stored on the node's disk and is lost with the cluster.

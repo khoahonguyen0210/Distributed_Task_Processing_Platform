@@ -1,6 +1,9 @@
-# Local notes
+# Local notes and AI tool files
 project-context/
 project_context/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
 
 # Environments and interpreter pins
 .venv/
@@ -12,6 +15,7 @@ ENV/
 .env.*
 !.env.example
 .python-version
+.tool-versions
 research/envs/
 __pypackages__/
 .pdm-python
@@ -88,11 +92,17 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+.vs/
 *.swp
 *.swo
 *~
 *.code-workspace
 .history/
+
+# Backup and merge files
+*.bak
+*.orig
+*.rej
 
 # Operating system
 .DS_Store

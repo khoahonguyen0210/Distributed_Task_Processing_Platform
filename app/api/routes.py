@@ -122,7 +122,7 @@ def list_dead_letters(
 @router.post(
     "/dead-letters/{job_id}/replay",
     response_model=JobOut,
-    description="Queues a dead-letter job again with a fresh attempt count. Its history is kept.",
+    description="Queues a dead-letter job again with its attempts set to 0. Its history is kept.",
 )
 def replay_dead_letter(job_id: JobId, request: Request) -> JobOut:
     queue = get_queue(request)
