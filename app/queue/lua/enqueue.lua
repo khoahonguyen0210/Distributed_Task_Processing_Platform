@@ -1,7 +1,12 @@
 local id, jtype, payload = ARGV[2], ARGV[3], ARGV[4]
 local priority, max_attempts, delay = ARGV[5], ARGV[6], tonumber(ARGV[7])
+local deadline, max_depth = tonumber(ARGV[8]), tonumber(ARGV[9])
 local key = job_key(id)
 if redis.call('EXISTS', key) == 1 then return 0 end
+if max_depth > 0 and redis.call('ZCARD', READY) >= max_depth then
+  redis.call('HINCRBY', STATS, 'rejected', 1)
+  return -1
+end
 
 local now = now_ms()
 local state, eligible = 'queued', now
@@ -10,6 +15,7 @@ if delay > 0 then state, eligible = 'scheduled', now + delay end
 redis.call('HSET', key, 'id', id, 'type', jtype, 'payload', payload, 'state', state,
   'priority', priority, 'attempts', 0, 'max_attempts', max_attempts,
   'created_at', now, 'updated_at', now, 'eligible_at', eligible)
+if deadline > 0 then redis.call('HSET', key, 'deadline_at', now + deadline) end
 redis.call('ZADD', JOBS, now, id)
 if state == 'queued' then
   redis.call('ZADD', READY, ready_score(priority), id)

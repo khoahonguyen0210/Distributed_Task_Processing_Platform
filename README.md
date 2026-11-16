@@ -14,6 +14,8 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
 ![KEDA](https://img.shields.io/badge/KEDA-0B2A4A)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
+![llama.cpp](https://img.shields.io/badge/llama.cpp-1F2937)
 ![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -22,7 +24,7 @@
 
 </div>
 
-Apps should not make people wait for slow work such as sending emails or building reports. They hand that work to a job queue, and background workers do it. This project builds such a queue on Redis, with a live dashboard that shows every job as it waits, runs, fails, and is tried again. On a local Kubernetes cluster, workers start when jobs arrive and stop when the queue is empty.
+Apps should not make people wait for slow work such as sending emails or building reports. They hand that work to a job queue, and background workers do it. This project builds such a queue on Redis, with a live dashboard that shows every job as it waits, runs, fails, and is tried again. On a local Kubernetes cluster, workers start when jobs arrive and stop when the queue is empty, and a small language model answers prompts sent as jobs.
 
 ## Features
 
@@ -31,6 +33,8 @@ Apps should not make people wait for slow work such as sending emails or buildin
 - **Priority, delay, and cancel.** Jobs run by priority (0 to 9), can start later, and can be cancelled while they wait.
 - **Health checks and metrics.** Health endpoints, plus a `/metrics` page in Prometheus format.
 - **Workers that scale themselves.** On Kubernetes, KEDA adds workers when jobs wait and removes them when the queue is empty, down to zero. A removed worker finishes its job first.
+- **A language model behind the queue.** `llm_generate` jobs go to llama.cpp model servers in the cluster. KEDA adds model servers when requests wait for a free slot or when jobs get slow.
+- **Load shedding.** When the queue is full, the API answers `429 Too Many Requests`. A job that waits past its deadline expires instead of running late.
 
 ## Results
 
@@ -45,7 +49,7 @@ Measured on one Windows laptop (Intel i7-1260P), 200 jobs per trial, median of 3
 - For CPU jobs, separate processes are needed. Five threads in one process were no faster than one thread, because of Python's global interpreter lock.
 - A worker killed in the middle of a job lost nothing. Another worker took the job and finished it.
 - When 8 threads claimed 60 jobs at the same time, no job was given out twice.
-- **94 tests pass**, and Ruff and mypy (strict) report 0 issues.
+- **123 tests pass**, and Ruff and mypy (strict) report 0 issues.
 
 These numbers show how the queue scales on one laptop. They are not its top speed, and not a production claim. Raw data: [`benchmarks/results/20261011T034507Z/`](benchmarks/results/20261011T034507Z/).
 
@@ -66,6 +70,22 @@ One burst of 120 jobs (1 s each) on a local kind cluster, measured for 200 s. Me
 
 Details and raw data: [`docs/kubernetes.md`](docs/kubernetes.md).
 
+### Language model jobs
+
+A small model (Qwen2.5-0.5B, 4 CPUs per model server) on the same kind cluster. One burst of 24 `llm_generate` jobs over 60 s, measured for 240 s. Median of 2 trials. **239 of 240 jobs succeeded and 1 was refused with `429`. None were lost or expired.**
+
+| Model servers | p95 | Server-seconds |
+|---|---:|---:|
+| Fixed 1 | 10.1 s | 240 |
+| Fixed 2 | 22.1 s | 480 |
+| KEDA, 1 to 2 | 21.0 s | **345** |
+
+- A second server did not help on this laptop: the servers share 4 performance cores and too little memory, so the model kept being read again from disk.
+- KEDA used 28% less server time than 2 fixed servers. It added a server only when requests waited, and that server was ready about 18 s after KEDA asked for it.
+- Latency varied up to 5 times between trials of the same setup, so the counts and server time are the solid results. A worker or model server killed mid-request lost no job.
+
+Details and raw data: [`docs/inference.md`](docs/inference.md).
+
 ## How it works
 
 ```mermaid
@@ -85,11 +105,11 @@ flowchart LR
 
 Redis stores each job as a hash, and keeps sorted sets for jobs that are ready, delayed, running, or dead. Every step is one Lua script, which Redis runs as a single action, so two workers can never take the same job. Details are in [`docs/design.md`](docs/design.md).
 
-A job is always in one of these states: `scheduled`, `queued`, `running`, `retry_scheduled`, `succeeded`, `failed`, `dead_letter`, or `cancelled`.
+A job is always in one of these states: `scheduled`, `queued`, `running`, `retry_scheduled`, `succeeded`, `failed`, `dead_letter`, `cancelled`, or `expired`.
 
 ## Job types
 
-These job types are simple examples of real work, so each behavior is easy to see. No other type can run.
+The first five types are simple examples of real work, so each behavior is easy to see. No other type can run.
 
 | Type | Payload (the input) | Example of |
 |---|---|---|
@@ -98,6 +118,7 @@ These job types are simple examples of real work, so each behavior is easy to se
 | `cpu` | `{"n": 200000}` | Resizing a photo or building a report |
 | `flaky` | `{"fail_times": 2}` | A service that fails a few times, then works |
 | `fail` | `{"message": "text"}` | A request with bad data, which is not retried |
+| `llm_generate` | `{"prompt": "Explain a queue.", "max_tokens": 64}` | Asking a language model for text (needs the model server, see [`docs/inference.md`](docs/inference.md)) |
 
 ## API
 
@@ -109,7 +130,7 @@ curl -X POST http://127.0.0.1:8000/api/jobs -H "Content-Type: application/json" 
 curl http://127.0.0.1:8000/api/jobs/<id>
 ```
 
-`priority` (0 to 9, default 5), `delay_seconds`, and `max_attempts` are optional.
+`priority` (0 to 9, default 5), `delay_seconds`, `max_attempts`, and `deadline_seconds` are optional. A job that no worker has started by its deadline goes to `expired`. When the queue is full, the API answers `429` with a `Retry-After` header.
 
 | Endpoint | Use |
 |---|---|
@@ -126,9 +147,10 @@ curl http://127.0.0.1:8000/api/jobs/<id>
 | API | Python, FastAPI, Pydantic | Taking jobs and reporting their state |
 | Queue | Redis 7.4, Lua scripts, Pub/Sub | Storing jobs, safe claiming, live events |
 | Dashboard | HTML, CSS, JavaScript, Canvas, WebSockets | Showing jobs and workers live |
-| Monitoring | Health endpoints, Prometheus text format | Checking the service and reading metrics |
+| Monitoring | Health endpoints, Prometheus | Checking the service, reading metrics, and feeding the autoscaler |
 | Deployment and CI | Docker Compose, GitHub Actions, pytest, Ruff, mypy | Running the stack and checking every change |
-| Autoscaling | Kubernetes (kind), KEDA, Helm | Starting and stopping workers by queue size |
+| Autoscaling | Kubernetes (kind), KEDA, Helm | Starting and stopping workers and model servers |
+| Model serving | llama.cpp, Qwen2.5-0.5B-Instruct (GGUF), httpx | Answering `llm_generate` jobs on the CPU |
 
 ## Quick start
 
@@ -169,6 +191,7 @@ Run the last line in its own terminal, once for each worker you want.
 You also need kind, kubectl, and Helm. Run these in the repository folder. [`docs/kubernetes.md`](docs/kubernetes.md) explains each step.
 
 ```bash
+mkdir -p models
 kind create cluster --config infra/kind/cluster.yaml
 docker build -f docker/Dockerfile -t taskq:local .
 docker save --platform linux/amd64 -o taskq.tar taskq:local
@@ -179,6 +202,8 @@ kubectl apply -k infra/kubernetes/autoscaling
 kubectl -n taskq port-forward svc/api 8000:8000
 ```
 
+To add the language model, download the model file into `models/` and apply `infra/kubernetes/inference` instead. The steps are in [`docs/inference.md`](docs/inference.md).
+
 ## Testing
 
 | Step | Command |
@@ -188,13 +213,15 @@ kubectl -n taskq port-forward svc/api 8000:8000
 | Stack check (needs the Docker stack) | `python scripts/smoke_test.py` |
 | Benchmark (needs Redis) | `python -m scripts.benchmark` |
 | Kill and stop workers during jobs (needs the cluster) | `python -m scripts.chaos_test` |
+| Kill model servers and workers during LLM jobs | `python -m scripts.chaos_test model-server-kill llm-worker-kill` |
 | Autoscaling benchmark (needs the cluster) | `python -m scripts.burst_benchmark` |
+| LLM benchmark (needs the inference setup) | `python -m scripts.llm_benchmark` |
 
-Tests use Redis database 15 and delete their own keys. Without Redis, only the unit tests run.
+Tests use Redis database 15 and delete their own keys. Without Redis, only the unit tests run. The LLM tests use a fake model server, so they need no model file.
 
 ## Configuration
 
-Settings come from environment variables or a `.env` file. Copy [`.env.example`](.env.example), which lists every setting with its default. The ones most often changed are `REDIS_URL`, `API_PORT`, `LEASE_SECONDS`, and `DEFAULT_MAX_ATTEMPTS`. For Docker Compose, `WORKERS` and `WORKER_CONCURRENCY` in `docker/.env` set the number of workers and the jobs each one runs at once.
+Settings come from environment variables or a `.env` file. Copy [`.env.example`](.env.example), which lists every setting with its default. The ones most often changed are `REDIS_URL`, `API_PORT`, `LEASE_SECONDS`, and `DEFAULT_MAX_ATTEMPTS`. For Docker Compose, `WORKERS` and `WORKER_CONCURRENCY` in `docker/.env` set the number of workers and the jobs each one runs at once. `MAX_QUEUE_DEPTH` turns on the queue limit (0 means no limit), and `LLM_SERVER_URL` points workers to the model server.
 
 On Windows, use `127.0.0.1`, not `localhost`, in `REDIS_URL`. Otherwise each new connection waits about 2 seconds.
 
@@ -204,7 +231,8 @@ On Windows, use `127.0.0.1`, not `localhost`, in `REDIS_URL`. Otherwise each new
 app/api/        HTTP routes
 app/queue/      Redis queue and Lua scripts
 app/workers/    Worker process
-app/jobs/       Job types
+app/jobs/       Job types, including the language model job
+app/fakes/      Fake model server for tests and CI
 app/dashboard/  Dashboard page
 tests/          Unit tests and tests against a real Redis
 scripts/        Benchmarks, stack check, and cluster tests
@@ -216,8 +244,9 @@ infra/          kind cluster and Kubernetes files
 
 ## Privacy and security
 
-- No personal data, accounts, tracking, or analytics. Nothing is sent outside your computer.
-- Only the five job types can run. Submitted text is never run as code.
+- No personal data, accounts, tracking, or analytics. Nothing is sent outside your computer. Prompts go only to the model server in your own cluster.
+- Only the six job types can run. Submitted text is never run as code. Prompts are only sent to the model, as text.
+- The model file is downloaded by you and is not part of this repository. Its license is Apache-2.0.
 - The API has no sign-in, so it listens only on `127.0.0.1`. Do not expose it to a network.
 - Payloads are limited to 16 KB, and request bodies to 128 KB.
 
@@ -227,6 +256,7 @@ infra/          kind cluster and Kubernetes files
 - A job can run twice after a crash, so job code must be safe to repeat.
 - High-priority jobs always go first, so a steady stream of them can keep low-priority jobs waiting.
 - Measured on one laptop only. The Kubernetes cluster has one node, so all pods share the same CPU.
+- On this laptop, more than 2 model servers made text generation slower, not faster.
 
 ## Future work
 

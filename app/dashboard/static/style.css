@@ -285,6 +285,8 @@ tr.flash { animation: flash 1.4s ease-out; }
 .s-queued::before { background: transparent; border: 1.5px solid var(--text); }
 .s-scheduled::before { background: transparent; border: 1.5px dashed var(--muted); }
 .s-cancelled { color: var(--muted); text-decoration: line-through; }
+.s-expired { color: var(--muted); }
+.s-expired::before { background: var(--muted); }
 
 .form { display: flex; flex-direction: column; gap: 16px; }
 .form label { display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-small); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted); flex: 1; min-width: 0; }

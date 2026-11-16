@@ -2,15 +2,22 @@ import argparse
 import csv
 import json
 import statistics
-import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.observability.metrics import percentile
-from scripts.cluster import Api, deployment_replicas, machine, set_replicas, wait_until
+from scripts.cluster import (
+    Api,
+    Sample,
+    Sampler,
+    deployment_replicas,
+    machine,
+    set_replicas,
+    wait_until,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKERS = "worker"
@@ -27,53 +34,6 @@ JOB_FIELDS = [
     "end_to_end_ms",
 ]
 SAMPLE_FIELDS = ["mode", "trial", "t", "replicas", "ready", "alive", "backlog"]
-
-
-@dataclass
-class Sample:
-    t: float
-    replicas: int
-    ready: int
-    alive: int
-    backlog: int
-
-
-class Sampler(threading.Thread):
-    def __init__(self, api: Api, start: float, every: float = 1.0) -> None:
-        super().__init__(daemon=True)
-        self.api = api
-        self.start_at = start
-        self.every = every
-        self.samples: list[Sample] = []
-        self.max_gap = 0.0
-        self.halt = threading.Event()
-
-    def run(self) -> None:
-        last = time.time()
-        while not self.halt.is_set():
-            now = time.time()
-            self.max_gap = max(self.max_gap, now - last)
-            last = now
-            try:
-                replicas, ready = deployment_replicas(WORKERS)
-                m = self.api.metrics()
-                self.samples.append(
-                    Sample(
-                        round(now - self.start_at, 2),
-                        replicas,
-                        ready,
-                        int(m["workers"]["alive"]),
-                        int(m["backlog"]),
-                    )
-                )
-            except Exception as exc:
-                print(f"  sample failed: {exc}", flush=True)
-            self.halt.wait(max(0.0, self.every - (time.time() - now)))
-
-    def stop(self) -> list[Sample]:
-        self.halt.set()
-        self.join(timeout=10)
-        return self.samples
 
 
 def replica_seconds(samples: list[Sample], start: float, end: float) -> float:
@@ -170,7 +130,7 @@ def run_trial(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[Sample], float]:
     prepare(mode, api)
     start = time.time() + args.idle_before
-    sampler = Sampler(api, start)
+    sampler = Sampler(api, start, WORKERS)
     sampler.start()
     time.sleep(args.idle_before)
     base = api.finished_total()

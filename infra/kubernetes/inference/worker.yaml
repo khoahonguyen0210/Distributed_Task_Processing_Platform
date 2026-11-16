@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 150
+      containers:
+        - name: worker
+          args: ["--id", "$(POD_NAME)", "--concurrency", "2"]
+          env:
+            - name: SHUTDOWN_GRACE_SECONDS
+              value: "130"
+          ports:
+            - name: metrics
+              containerPort: 9100

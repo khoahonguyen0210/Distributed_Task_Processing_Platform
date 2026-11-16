@@ -23,6 +23,13 @@ def test_terminal_states_have_no_exit_except_dead_letter_replay() -> None:
         assert ALLOWED_TRANSITIONS[state] == expected
 
 
+def test_only_waiting_jobs_can_expire() -> None:
+    assert JobState.EXPIRED in TERMINAL_STATES
+    assert is_allowed(JobState.QUEUED, JobState.EXPIRED)
+    assert not is_allowed(JobState.RUNNING, JobState.EXPIRED)
+    assert not is_allowed(JobState.SCHEDULED, JobState.EXPIRED)
+
+
 def test_running_jobs_cannot_be_cancelled() -> None:
     assert JobState.RUNNING not in CANCELLABLE_STATES
     assert not is_allowed(JobState.RUNNING, JobState.CANCELLED)

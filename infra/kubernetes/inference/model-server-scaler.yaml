@@ -1,0 +1,30 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: model-server
+spec:
+  scaleTargetRef:
+    name: model-server
+  minReplicaCount: 1
+  maxReplicaCount: 2
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+        scaleDown:
+          stabilizationWindowSeconds: 120
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://prometheus.taskq.svc.cluster.local:9090
+        query: sum(llamacpp:requests_deferred) or vector(0)
+        threshold: "2"
+        activationThreshold: "1"
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://prometheus.taskq.svc.cluster.local:9090
+        query: (histogram_quantile(0.95, sum by (le) (rate(taskq_job_end_to_end_seconds_bucket{type="llm_generate"}[1m]))) > 0) or vector(0)
+        threshold: "25"

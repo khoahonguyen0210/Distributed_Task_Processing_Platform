@@ -8,7 +8,7 @@ Every key starts with `KEY_PREFIX` (default `taskq:`).
 
 | Key | Type | Holds |
 |---|---|---|
-| `job:{id}` | Hash | One job: type, payload, state, priority, tries, times, worker, lease token, result, last error |
+| `job:{id}` | Hash | One job: type, payload, state, priority, tries, times, deadline, worker, lease token, result, last error |
 | `job:{id}:history` | List | The last 50 events of the job, as JSON |
 | `ready` | Sorted set | Jobs that can run now. Score: priority first, then the order the job became ready |
 | `seq` | String | Counter that numbers jobs as they become ready |
@@ -16,8 +16,9 @@ Every key starts with `KEY_PREFIX` (default `taskq:`).
 | `leases` | Sorted set | Running jobs. Score: the time the lease runs out |
 | `dead` | Sorted set | Dead-letter jobs. Score: the time they entered the list |
 | `jobs` | Sorted set | Every job by creation time, for listing |
-| `stats` | Hash | Counters: submitted, succeeded, failed, retried, dead_letter, cancelled, replayed, recovered |
+| `stats` | Hash | Counters: submitted, succeeded, failed, retried, dead_letter, cancelled, replayed, recovered, expired, rejected |
 | `durations` | List | Run time of the last 1,000 successful jobs |
+| `latency` | Hash | Time from submission to success, counted in buckets for each job type. The API turns it into a Prometheus histogram |
 | `wake` | List | One item per new ready job. Idle workers wait on it with `BLPOP` instead of polling |
 | `workers` | Sorted set | Worker IDs by last heartbeat |
 | `worker:{id}` | Hash | Worker details: process ID, slots, status, current jobs, counts |
@@ -33,10 +34,10 @@ Each script runs inside Redis as one step. No other command can run in the middl
 
 | Script | Called by | Change |
 |---|---|---|
-| `enqueue.lua` | API | New job to `ready` (or to `scheduled` with a delay) |
-| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. Skips IDs of jobs that have expired or moved on |
+| `enqueue.lua` | API | New job to `ready` (or to `scheduled` with a delay). Refuses the job when `ready` already holds `MAX_QUEUE_DEPTH` jobs |
+| `claim.lua` | Worker | Best job from `ready` to `leases`, with a new random lease token. A job whose deadline has passed goes to `expired` instead. Skips IDs of jobs that were deleted or moved on |
 | `renew.lua` | Worker heartbeat | Moves the lease end forward, only if the token still matches |
-| `complete.lua` | Worker | `running` to `succeeded`, only if the token matches. Sets the TTL |
+| `complete.lua` | Worker | `running` to `succeeded`, only if the token matches. Adds the job's total time to `latency` and sets the TTL |
 | `fail.lua` | Worker | `running` to `retry_scheduled`, `failed`, or `dead_letter`, only if the token matches |
 | `release.lua` | Stopping worker | `running` back to `queued`. The stopped run does not count as a try |
 | `promote.lua` | Every worker, every 0.5 s | Due jobs from `scheduled` to `ready` |
@@ -52,7 +53,9 @@ All scripts take the time from Redis (`TIME`), so the API, the workers, and the 
 2. **Only the owner can finish a job.** Every claim gets a new random token, and `complete`, `fail`, `renew`, and `release` check it. If a worker's lease runs out and the job is taken back, that worker is refused and its result is dropped.
 3. **A running job always has a lease.** If its worker dies, the lease runs out and `recover.lua` takes the job back. Nothing is lost silently.
 4. **Tries are bounded.** A lost run counts as a try, so a job that crashes every worker ends in `dead_letter`. A run stopped by a clean shutdown does not count.
-5. **Finished jobs expire.** Succeeded, failed, and cancelled jobs are deleted after `JOB_TTL_SECONDS`, dead letters after `DEAD_LETTER_TTL_SECONDS`. Workers remove expired IDs from `dead` and `jobs` every heartbeat.
+5. **Finished jobs are deleted later.** Succeeded, failed, cancelled, and expired jobs are deleted after `JOB_TTL_SECONDS`, dead letters after `DEAD_LETTER_TTL_SECONDS`. Workers remove deleted IDs from `dead` and `jobs` every heartbeat.
+6. **A late job does not run.** A job can have a deadline. If no worker has started it by then, `claim.lua` moves it to `expired` and takes the next job. A running job is never stopped by its deadline. A job that must run again after a failure or a lost lease also expires if its deadline has passed by then.
+7. **The queue has a size limit.** When `MAX_QUEUE_DEPTH` is above 0 and `ready` holds that many jobs, `enqueue.lua` refuses new jobs, and the API answers `429 Too Many Requests` with a `Retry-After` header. The check and the insert are one step, so the limit is never passed. `0` turns the limit off.
 
 ## Workers
 
@@ -63,6 +66,8 @@ A worker is one process with a fixed number of slots (threads). Each slot claims
 
 Every worker does the background work, so it keeps going as long as one worker is alive. The scripts are safe to run from many workers at once.
 
+When `WORKER_METRICS_PORT` is set, a worker also serves `/metrics` on that port: its slots, running jobs, and counts of finished and failed jobs. Prometheus reads it in the Kubernetes setup.
+
 On `SIGINT`, `SIGTERM`, or Ctrl+Break, the worker stops claiming, waits up to `SHUTDOWN_GRACE_SECONDS` for running jobs, releases any job still running, and removes itself from `workers`. A second signal makes it release its jobs and exit at once.
 
 ## Duplicate runs
@@ -72,7 +77,7 @@ Delivery is at least once. A job runs twice when:
 - the worker dies after the handler finished but before `complete.lua` ran, or
 - the handler runs longer than the lease and the worker cannot renew it, for example because Redis was unreachable.
 
-In the second case the first run's result is refused, so only one result is saved, but anything the first run changed outside the queue has already happened. Job code must therefore be safe to run twice (the technical word is idempotent). The built-in job types are: running one twice gives the same result and changes nothing outside the worker.
+In the second case the first run's result is refused, so only one result is saved, but anything the first run changed outside the queue has already happened. Job code must therefore be safe to run twice (the technical word is idempotent). The built-in job types are: running one twice changes nothing outside the worker. `llm_generate` only asks the model server for text. With temperature 0 the answer is almost always the same, but it can change a little, because the server handles several requests together.
 
 ## Live events
 

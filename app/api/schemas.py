@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.queue.models import Job, JobState
 from app.queue.redis_queue import MAX_DELAY_SECONDS
@@ -19,6 +19,18 @@ class SubmitJob(BaseModel):
         default=0, ge=0, le=MAX_DELAY_SECONDS, description="Wait before running."
     )
     max_attempts: int | None = Field(default=None, ge=1, le=10)
+    deadline_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        le=2 * MAX_DELAY_SECONDS,
+        description="The job expires if no worker starts it within this time.",
+    )
+
+    @model_validator(mode="after")
+    def deadline_after_delay(self) -> "SubmitJob":
+        if self.deadline_seconds is not None and self.deadline_seconds <= self.delay_seconds:
+            raise ValueError("deadline_seconds must be longer than delay_seconds")
+        return self
 
 
 class JobOut(BaseModel):
@@ -32,6 +44,7 @@ class JobOut(BaseModel):
     created_at: int
     updated_at: int
     eligible_at: int | None
+    deadline_at: int | None
     started_at: int | None
     finished_at: int | None
     worker_id: str | None
@@ -51,6 +64,7 @@ class JobOut(BaseModel):
             created_at=job.created_at,
             updated_at=job.updated_at,
             eligible_at=job.eligible_at,
+            deadline_at=job.deadline_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
             worker_id=job.worker_id,

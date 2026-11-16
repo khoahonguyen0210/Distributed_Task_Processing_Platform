@@ -3,9 +3,11 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -27,7 +29,14 @@ def kubectl(*args: str, check: bool = True, timeout: float = 60) -> str:
     return result.stdout.strip()
 
 
+def keda_installed() -> bool:
+    # Without the KEDA CRD, "kubectl get scaledobject" fails instead of finding nothing.
+    return bool(kubectl("get", "crd", "scaledobjects.keda.sh", "--ignore-not-found", "-o", "name"))
+
+
 def has_scaler(name: str) -> bool:
+    if not keda_installed():
+        return False
     return bool(kubectl("get", "scaledobject", name, "--ignore-not-found", "-o", "name"))
 
 
@@ -67,6 +76,44 @@ def pod_names(app: str) -> list[str]:
 
 def kill_pod(name: str) -> None:
     kubectl("delete", "pod", name, "--grace-period=0", "--force", "--wait=false")
+
+
+def set_api_env(name: str, value: str | None) -> None:
+    """Override one API setting, or drop the override with None so the ConfigMap applies."""
+    kubectl("set", "env", "deploy/api", f"{name}-" if value is None else f"{name}={value}")
+    kubectl("rollout", "status", "deploy/api", "--timeout=180s", timeout=200)
+
+
+class PortForward:
+    def __init__(self, service: str, local_port: int, remote_port: int) -> None:
+        self.target = f"svc/{service}"
+        self.ports = f"{local_port}:{remote_port}"
+        self.url = f"http://127.0.0.1:{local_port}"
+        self.proc: subprocess.Popen[bytes] | None = None
+
+    def start(self) -> None:
+        self.stop()
+        command = ["kubectl", "--context", CONTEXT, "-n", NAMESPACE, "port-forward"]
+        self.proc = subprocess.Popen(
+            [*command, self.target, self.ports],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        def ready() -> bool:
+            try:
+                return httpx.get(self.url + "/health/live", timeout=2).status_code == 200
+            except httpx.HTTPError:
+                return False
+
+        if not wait_until(ready, 30, 0.5):
+            raise TimeoutError(f"port-forward to {self.target} did not open")
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc.wait(timeout=10)
+        self.proc = None
 
 
 class Api:
@@ -131,6 +178,54 @@ class Api:
             for job_id, job in zip(ids, self.jobs(ids), strict=True)
             if job is not None and job["state"] not in TERMINAL
         ]
+
+
+@dataclass
+class Sample:
+    t: float
+    replicas: int
+    ready: int
+    alive: int
+    backlog: int
+
+
+class Sampler(threading.Thread):
+    def __init__(self, api: Api, start: float, deployment: str, every: float = 1.0) -> None:
+        super().__init__(daemon=True)
+        self.api = api
+        self.deployment = deployment
+        self.start_at = start
+        self.every = every
+        self.samples: list[Sample] = []
+        self.max_gap = 0.0
+        self.halt = threading.Event()
+
+    def run(self) -> None:
+        last = time.time()
+        while not self.halt.is_set():
+            now = time.time()
+            self.max_gap = max(self.max_gap, now - last)
+            last = now
+            try:
+                replicas, ready = deployment_replicas(self.deployment)
+                m = self.api.metrics()
+                self.samples.append(
+                    Sample(
+                        round(now - self.start_at, 2),
+                        replicas,
+                        ready,
+                        int(m["workers"]["alive"]),
+                        int(m["backlog"]),
+                    )
+                )
+            except Exception as exc:
+                print(f"  sample failed: {exc}", flush=True)
+            self.halt.wait(max(0.0, self.every - (time.time() - now)))
+
+    def stop(self) -> list[Sample]:
+        self.halt.set()
+        self.join(timeout=10)
+        return self.samples
 
 
 def cpu_name() -> str:

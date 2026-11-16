@@ -1,0 +1,76 @@
+{
+  "run_id": "20261116T052811Z",
+  "machine": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logical_cpus": 16,
+    "os": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.10",
+    "docker_cpus": 16,
+    "docker_memory_gib": 7.61,
+    "kubernetes": "v1.37.0",
+    "nodes": 1,
+    "keda_image": "ghcr.io/kedacore/keda:2.21.0"
+  },
+  "totals_before": {
+    "submitted": 251,
+    "succeeded": 212,
+    "failed": 0,
+    "retried": 51,
+    "dead_letter": 0,
+    "cancelled": 0,
+    "replayed": 0,
+    "recovered": 4,
+    "expired": 39,
+    "rejected": 30
+  },
+  "totals_after": {
+    "submitted": 260,
+    "succeeded": 221,
+    "failed": 0,
+    "retried": 53,
+    "dead_letter": 0,
+    "cancelled": 0,
+    "replayed": 0,
+    "recovered": 5,
+    "expired": 39,
+    "rejected": 68
+  },
+  "results": [
+    {
+      "scenario": "llm-worker-kill",
+      "action": "force-deleted the worker pod while it waited for the model server",
+      "max_tokens": 256,
+      "killed_pod": "worker-7659b74bbd-pkxhg",
+      "states_before": {
+        "running": 1
+      },
+      "states_after": {
+        "succeeded": 1
+      },
+      "attempts": 2,
+      "recovered": true,
+      "seconds_to_finish": 52.6,
+      "passed": true
+    },
+    {
+      "scenario": "model-server-kill",
+      "action": "force-deleted 1 of 2 model-server pods while requests were running",
+      "jobs": 8,
+      "refused_then_sent_again": 38,
+      "max_tokens": 256,
+      "killed_pod": "model-server-5c84bc7fbf-gtwmx",
+      "states_before": {
+        "running": 4,
+        "succeeded": 2,
+        "queued": 2
+      },
+      "states_after": {
+        "succeeded": 8
+      },
+      "retried_runs": 2,
+      "lost": 0,
+      "seconds_to_finish": 56.0,
+      "passed": true
+    }
+  ]
+}

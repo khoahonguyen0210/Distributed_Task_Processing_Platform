@@ -40,7 +40,7 @@ def create_app(settings: Settings | None = None, queue: RedisQueue | None = None
 
     app = FastAPI(
         title="taskq",
-        version="1.1.0",
+        version="1.2.0",
         summary="Submit jobs, follow their state, and watch workers process them.",
         lifespan=lifespan,
     )

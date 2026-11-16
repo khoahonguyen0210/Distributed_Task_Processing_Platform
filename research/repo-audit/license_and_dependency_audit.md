@@ -25,13 +25,13 @@ This project is MIT licensed. `pyproject.toml` lists each package with a lowest 
 | uvicorn | 0.54.0 | BSD-3-Clause | Web server |
 | websockets | 17.2 | BSD-3-Clause | WebSocket support for uvicorn |
 | redis (redis-py) | 7.4.1 | MIT | Redis client |
+| httpx | 0.28.1 | BSD-3-Clause | Worker calls to the model server |
 
 Only for development:
 
 | Package | Version tested | License |
 |---|---|---|
 | pytest | 9.1.1 | MIT |
-| httpx | 0.28.1 | BSD-3-Clause |
 | ruff | 0.17.0 | MIT |
 | mypy | 1.20.2 | MIT |
 
@@ -45,7 +45,15 @@ Services and tools:
 | Kubernetes | 1.37.0 | Apache-2.0 | Part of the kind node image |
 | KEDA | 2.21.0 (Helm chart `kedacore/keda`) | Apache-2.0 | Scales the workers |
 | Helm | 4.3.2 | Apache-2.0 | Installs KEDA |
+| llama.cpp server | build 12407 (`ghcr.io/ggml-org/llama.cpp:server-b12407`) | MIT | Runs the language model |
+| Prometheus | 3.16.0 (`prom/prometheus:v3.16.0`) | Apache-2.0 | Reads metrics inside the cluster |
 
 ## A note on Redis 7.4
 
 Redis 7.4 and later are not under the BSD license. Running an unmodified Redis server on your own computer for development is allowed under the new terms. If you need a fully open source server, Valkey (BSD-3-Clause) speaks the same protocol and should work with the same commands, but it was not tested here.
+
+## Model
+
+| Model | File | License | Note |
+|---|---|---|---|
+| Qwen2.5-0.5B-Instruct | `qwen2.5-0.5b-instruct-q4_k_m.gguf` from `Qwen/Qwen2.5-0.5B-Instruct-GGUF` | Apache-2.0 (the `LICENSE` file in the model repository was read) | Downloaded by the user into `models/`. The file is not in this repository |

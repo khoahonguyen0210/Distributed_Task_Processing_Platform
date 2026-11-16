@@ -1,7 +1,7 @@
 import math
 from typing import Any
 
-from app.queue.redis_queue import RedisQueue
+from app.queue.redis_queue import LATENCY_BUCKETS_MS, RedisQueue
 
 
 def percentile(values: list[int] | list[float], pct: float) -> float | None:
@@ -35,6 +35,7 @@ def collect(queue: RedisQueue) -> dict[str, Any]:
             "p95": percentile(durations, 95),
             "max": float(max(durations)) if durations else None,
         },
+        "latency_ms": queue.latency(),
     }
 
 
@@ -79,4 +80,22 @@ def prometheus_text(m: dict[str, Any]) -> str:
         "Run time of recent successful jobs.",
         [('{quantile="0.5"}', d["p50"]), ('{quantile="0.95"}', d["p95"]), ("_count", d["samples"])],
     )
+    lines.extend(latency_histogram(m.get("latency_ms", {})))
     return "\n".join(lines) + "\n"
+
+
+def latency_histogram(latency: dict[str, dict[str, int]]) -> list[str]:
+    name = "taskq_job_end_to_end_seconds"
+    lines = [
+        f"# HELP {name} Time from submission to success, for jobs that succeeded.",
+        f"# TYPE {name} histogram",
+    ]
+    for job_type, counts in sorted(latency.items()):
+        running = 0
+        for edge in LATENCY_BUCKETS_MS:
+            running += counts.get(str(edge), 0)
+            lines.append(f'{name}_bucket{{type="{job_type}",le="{edge / 1000:g}"}} {running}')
+        lines.append(f'{name}_bucket{{type="{job_type}",le="+Inf"}} {counts.get("count", 0)}')
+        lines.append(f'{name}_sum{{type="{job_type}"}} {counts.get("sum", 0) / 1000:g}')
+        lines.append(f'{name}_count{{type="{job_type}"}} {counts.get("count", 0)}')
+    return lines

@@ -6,10 +6,13 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+import redis
+
 from app.core.config import Settings
 from app.queue.models import TERMINAL_STATES, Job, JobState
 from app.queue.redis_queue import RedisQueue
 from app.workers.worker import Worker
+from tests.conftest import make_settings
 
 
 def wait_until(check: Callable[[], bool], timeout: float = 10.0) -> bool:
@@ -141,3 +144,16 @@ def test_killed_worker_job_is_recovered_by_another(queue: RedisQueue, settings: 
     events = [h["event"] for h in done.history]
     assert events == ["submitted", "started", "recovered", "started", "succeeded"]
     assert time.monotonic() - killed_at < lease + 6
+
+
+def test_worker_waits_for_redis_at_start_instead_of_crashing() -> None:
+    settings = make_settings(redis_url="redis://127.0.0.1:1/0")
+    client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.2)
+    worker = Worker(RedisQueue(client, settings), settings)
+    thread = threading.Thread(target=worker.run, daemon=True)
+    thread.start()
+    time.sleep(0.5)
+    assert thread.is_alive()
+    worker.stop()
+    thread.join(timeout=10)
+    assert not thread.is_alive()

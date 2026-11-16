@@ -8,16 +8,20 @@ from pathlib import Path
 from typing import Any
 
 from scripts.cluster import (
+    TERMINAL,
     Api,
     deployment_replicas,
     kill_pod,
     machine,
+    pod_names,
     set_replicas,
     wait_until,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKERS = "worker"
+MODEL_SERVERS = "model-server"
+LONG_ANSWER = "Count from 1 to 400, one number per line."
 
 
 def settle_workers(api: Api, count: int) -> None:
@@ -106,17 +110,101 @@ def worker_kill(api: Api, args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def llm_worker_kill(api: Api, args: argparse.Namespace) -> dict[str, Any]:
+    settle_workers(api, 2)
+    payload = {"prompt": LONG_ANSWER, "max_tokens": args.llm_tokens}
+    ids = [api.submit("llm_generate", payload).json()["id"]]
+    job = wait_running(api, ids, 1)[0]
+    before = states(api, ids)
+    killed_at = time.time()
+    kill_pod(job["worker_id"])
+    done = finish(api, ids, 300)[0]
+    attempts = done["attempts"] if done else None
+    after = states(api, ids)
+    return {
+        "scenario": "llm-worker-kill",
+        "action": "force-deleted the worker pod while it waited for the model server",
+        "max_tokens": args.llm_tokens,
+        "killed_pod": job["worker_id"],
+        "states_before": before,
+        "states_after": after,
+        "attempts": attempts,
+        "recovered": "recovered" in events(api, ids[0]),
+        "seconds_to_finish": round(time.time() - killed_at, 1),
+        "passed": after == {"succeeded": 1} and attempts == 2,
+    }
+
+
+def submit_accepted(
+    api: Api, count: int, job_type: str, payload: dict[str, Any], timeout: float = 300
+) -> tuple[list[str], int]:
+    ids: list[str] = []
+    refused = 0
+    deadline = time.monotonic() + timeout
+    while len(ids) < count:
+        response = api.submit(job_type, payload)
+        if response.status_code == 202:
+            ids.append(response.json()["id"])
+            continue
+        if response.status_code != 429 or time.monotonic() > deadline:
+            raise RuntimeError(f"unexpected answer {response.status_code}: {response.text}")
+        refused += 1
+        time.sleep(1)
+    return ids, refused
+
+
+def model_server_kill(api: Api, args: argparse.Namespace) -> dict[str, Any]:
+    settle_workers(api, 2)
+    set_replicas(MODEL_SERVERS, 2)
+    try:
+        if not wait_until(lambda: deployment_replicas(MODEL_SERVERS) == (2, 2), 300, 2):
+            raise TimeoutError("2 model servers did not start")
+        payload = {"prompt": LONG_ANSWER, "max_tokens": args.llm_tokens}
+        ids, refused = submit_accepted(api, args.llm_jobs, "llm_generate", payload)
+        wait_running(api, ids, 2)
+        before = states(api, ids)
+        victim = pod_names(MODEL_SERVERS)[0]
+        killed_at = time.time()
+        kill_pod(victim)
+        jobs = finish(api, ids, 600)
+        after = states(api, ids)
+    finally:
+        set_replicas(MODEL_SERVERS, None)
+    lost = sum(n for state, n in after.items() if state not in TERMINAL)
+    return {
+        "scenario": "model-server-kill",
+        "action": "force-deleted 1 of 2 model-server pods while requests were running",
+        "jobs": len(ids),
+        "refused_then_sent_again": refused,
+        "max_tokens": args.llm_tokens,
+        "killed_pod": victim,
+        "states_before": before,
+        "states_after": after,
+        "retried_runs": sum(max(0, j["attempts"] - 1) for j in jobs if j),
+        "lost": lost,
+        "seconds_to_finish": round(time.time() - killed_at, 1),
+        "passed": lost == 0,
+    }
+
+
 SCENARIOS: dict[str, Callable[[Api, argparse.Namespace], dict[str, Any]]] = {
     "worker-scale-down": scale_down,
     "worker-kill": worker_kill,
+    "llm-worker-kill": llm_worker_kill,
+    "model-server-kill": model_server_kill,
 }
+DEFAULT = ["worker-scale-down", "worker-kill"]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kill or stop pods during jobs; count lost jobs.")
-    parser.add_argument("scenarios", nargs="*", choices=list(SCENARIOS), help="default: all")
+    parser.add_argument(
+        "scenarios", nargs="*", choices=list(SCENARIOS), help="default: the two worker tests"
+    )
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--job-seconds", type=float, default=20)
+    parser.add_argument("--llm-tokens", type=int, default=256)
+    parser.add_argument("--llm-jobs", type=int, default=8)
     parser.add_argument("--out", type=Path, default=ROOT / "benchmarks" / "chaos")
     parser.add_argument("--keep-replicas", action="store_true", help="do not resume autoscaling")
     args = parser.parse_args()
@@ -127,7 +215,7 @@ def main() -> None:
     totals_before = api.metrics()["totals"]
     results = []
     try:
-        for name in args.scenarios or list(SCENARIOS):
+        for name in args.scenarios or DEFAULT:
             result = SCENARIOS[name](api, args)
             results.append(result)
             print(f"{'PASS' if result['passed'] else 'FAIL'} {name}: {json.dumps(result)}")

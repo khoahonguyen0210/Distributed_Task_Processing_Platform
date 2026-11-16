@@ -16,6 +16,7 @@ from app.jobs import JobContext, PermanentJobError, UnknownJobTypeError, get_spe
 from app.queue.backoff import retry_delay
 from app.queue.models import Job
 from app.queue.redis_queue import RedisQueue, ResultTooLargeError
+from app.workers.metrics_server import serve_metrics
 
 log = logging.getLogger("taskq.worker")
 
@@ -58,7 +59,18 @@ class Worker:
         if threading.current_thread() is threading.main_thread():
             self._install_signal_handlers()
         log.info("worker started", extra={"event": "worker_started", "worker_id": self.id})
-        self._heartbeat()
+        metrics = None
+        if self.s.worker_metrics_port:
+            metrics = serve_metrics(
+                self.s.worker_metrics_host, self.s.worker_metrics_port, self.render_metrics
+            )
+        while not self.stopping.is_set():
+            try:
+                self._heartbeat()
+                break
+            except redis.RedisError as exc:
+                log.error("cannot reach Redis: %s", exc, extra={"worker_id": self.id})
+                self.stopping.wait(2)
 
         house = threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True)
         house.start()
@@ -80,7 +92,24 @@ class Worker:
         house.join(timeout=self.s.maintenance_seconds + 2)
         with contextlib.suppress(redis.RedisError):
             self.q.remove_worker(self.id)
+        if metrics:
+            metrics.shutdown()
+            metrics.server_close()
         log.info("worker stopped", extra={"event": "worker_stopped", "worker_id": self.id})
+
+    def render_metrics(self) -> str:
+        with self._lock:
+            values = {
+                "taskq_worker_slots gauge": self.concurrency,
+                "taskq_worker_active_jobs gauge": len(self._active),
+                "taskq_worker_jobs_processed_total counter": self.processed,
+                "taskq_worker_job_failures_total counter": self.failures,
+            }
+        lines: list[str] = []
+        for key, value in values.items():
+            name, kind = key.split()
+            lines += [f"# TYPE {name} {kind}", f"{name} {value}"]
+        return "\n".join(lines) + "\n"
 
     def _install_signal_handlers(self) -> None:
         def handle(signum: int, frame: FrameType | None) -> None:
@@ -191,7 +220,7 @@ class Worker:
         try:
             spec = get_spec(job.type)
             payload = spec.payload_model.model_validate(job.payload)
-            result = spec.run(payload, JobContext(job.id, job.attempts, job.max_attempts))
+            result = spec.run(payload, JobContext(job.id, job.attempts, job.max_attempts, self.s))
             duration = int((time.perf_counter() - start) * 1000)
             try:
                 done = self.q.complete(job, result, duration)

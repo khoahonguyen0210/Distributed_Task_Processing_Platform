@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 
 import pytest
+import redis
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
@@ -111,10 +112,29 @@ def test_dead_letters_and_replay(client: TestClient, queue: RedisQueue) -> None:
 
 def test_job_types_list_schemas(client: TestClient) -> None:
     types = {t["name"]: t for t in client.get("/api/job-types").json()}
-    assert set(types) == {"add", "sleep", "cpu", "flaky", "fail"}
+    assert set(types) == {"add", "sleep", "cpu", "flaky", "fail", "llm_generate"}
     assert types["sleep"]["payload_schema"]["properties"]["seconds"]["maximum"] == 30
 
 
 def test_openapi_is_served(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/jobs" in paths and "/api/dead-letters/{job_id}/replay" in paths
+
+
+def test_full_queue_answers_429_with_retry_after(
+    redis_client: redis.Redis, settings: Settings
+) -> None:
+    full = settings.model_copy(update={"max_queue_depth": 1, "retry_after_seconds": 7})
+    with TestClient(create_app(full, RedisQueue(redis_client, full))) as c:
+        submit(c, type="add", payload={"a": 1, "b": 1})
+        response = c.post("/api/jobs", json={"type": "add", "payload": {"a": 1, "b": 1}})
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == "7"
+        assert c.get("/api/metrics").json()["totals"]["rejected"] == 1
+
+
+def test_deadline_must_be_longer_than_delay(client: TestClient) -> None:
+    body = {"type": "add", "payload": {"a": 1, "b": 1}, "delay_seconds": 5, "deadline_seconds": 5}
+    assert client.post("/api/jobs", json=body).status_code == 422
+    job = submit(client, type="add", payload={"a": 1, "b": 1}, deadline_seconds=9)
+    assert job["deadline_at"] - job["created_at"] == 9_000

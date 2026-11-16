@@ -1,0 +1,57 @@
+name: Cluster
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install kind
+        run: |
+          curl -sSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  kind" | sha256sum --check
+          sudo install kind /usr/local/bin/kind
+      - name: Create the cluster
+        run: |
+          mkdir -p models
+          kind create cluster --config infra/kind/cluster.yaml --wait 120s
+      - name: Build and load the image
+        run: |
+          docker build -f docker/Dockerfile -t taskq:local .
+          kind load docker-image taskq:local --name taskq
+      - name: Deploy with a fake model server
+        run: |
+          kubectl apply -k infra/kubernetes/ci
+          kubectl -n taskq rollout status deploy/redis deploy/api deploy/worker deploy/model-server --timeout=180s
+      - name: Install the test tools
+        run: python -m pip install -e ".[dev]"
+      - name: Open the API
+        run: |
+          kubectl -n taskq port-forward svc/api 8000:8000 > port-forward.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/health/live && break; sleep 1; done
+      - name: Smoke test
+        run: python scripts/smoke_test.py http://127.0.0.1:8000
+      - name: Kill workers during jobs
+        run: python -m scripts.chaos_test worker-kill llm-worker-kill --job-seconds 10
+      - name: Show the cluster
+        if: always()
+        run: |
+          kubectl -n taskq get pods -o wide
+          kubectl -n taskq logs deploy/api --tail 30
+          kubectl -n taskq logs deploy/worker --tail 30

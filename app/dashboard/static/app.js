@@ -7,6 +7,7 @@ const EXAMPLES = {
   cpu: { n: 200000 },
   flaky: { fail_times: 2 },
   fail: { message: "This job always fails." },
+  llm_generate: { prompt: "Explain what a job queue is.", max_tokens: 64 },
 };
 const STATE_NAMES = {
   scheduled: "Scheduled",
@@ -17,6 +18,7 @@ const STATE_NAMES = {
   failed: "Failed",
   dead_letter: "Dead letter",
   cancelled: "Cancelled",
+  expired: "Expired",
 };
 const CANCELLABLE = new Set(["scheduled", "queued", "retry_scheduled"]);
 const LABELS = {
@@ -25,6 +27,7 @@ const LABELS = {
   cpu: (p) => `Busy loop, ${Number(p.n).toLocaleString("en-US")} steps`,
   flaky: (p) => `Fail ${p.fail_times} ${plural(p.fail_times, "time", "times")}, then succeed`,
   fail: () => "Always fail",
+  llm_generate: (p) => `Ask the model, up to ${p.max_tokens ?? 64} tokens`,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -548,7 +551,7 @@ function makeField(canvas) {
       p.fade = 1;
       p.tx = w + 60;
       p.ty = p.y + (Math.random() - 0.5) * h * 0.3;
-    } else if (state === "failed" || state === "dead_letter" || state === "cancelled") {
+    } else if (["failed", "dead_letter", "cancelled", "expired"].includes(state)) {
       p.color = "bad";
       p.fade = 1;
       p.tx = p.x + (Math.random() - 0.5) * 80;

@@ -1,4 +1,4 @@
-from app.jobs import handlers
+from app.jobs import handlers, llm
 from app.jobs.registry import (
     REGISTRY,
     JobContext,
@@ -17,5 +17,6 @@ __all__ = [
     "UnknownJobTypeError",
     "get_spec",
     "handlers",
+    "llm",
     "validate_payload",
 ]

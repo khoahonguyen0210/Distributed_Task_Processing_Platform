@@ -12,7 +12,9 @@ def run(job_type: str, payload: dict[str, object], ctx: JobContext = CTX) -> obj
 
 
 def test_builtin_types_are_registered() -> None:
-    assert set(REGISTRY) == {"add", "sleep", "cpu", "flaky", "fail"}
+    assert set(REGISTRY) == {"add", "sleep", "cpu", "flaky", "fail", "llm_generate"}
+    assert REGISTRY["llm_generate"].deadline_seconds == 300
+    assert REGISTRY["add"].deadline_seconds is None
 
 
 def test_add_and_cpu_are_deterministic() -> None:

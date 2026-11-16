@@ -13,6 +13,20 @@ from app.queue.models import Job, JobState
 
 JSON_SEPARATORS = (",", ":")
 MAX_DELAY_SECONDS = 86_400
+LATENCY_BUCKETS_MS = (
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    20_000,
+    30_000,
+    60_000,
+    120_000,
+    300_000,
+)
 
 
 class PayloadTooLargeError(ValueError):
@@ -20,6 +34,10 @@ class PayloadTooLargeError(ValueError):
 
 
 class ResultTooLargeError(ValueError):
+    pass
+
+
+class QueueFullError(RuntimeError):
     pass
 
 
@@ -91,15 +109,30 @@ class RedisQueue:
         priority: int = 5,
         delay_seconds: float = 0,
         max_attempts: int | None = None,
+        deadline_seconds: float | None = None,
     ) -> Job:
         if not 0 <= priority <= 9:
             raise ValueError("priority must be between 0 and 9")
         if not 0 <= delay_seconds <= MAX_DELAY_SECONDS:
             raise ValueError(f"delay must be between 0 and {MAX_DELAY_SECONDS} seconds")
+        if deadline_seconds is not None and deadline_seconds <= delay_seconds:
+            raise ValueError("the deadline must be later than the delay")
         body = encode_json(payload, self.s.max_payload_bytes, PayloadTooLargeError)
         attempts = max_attempts or self.s.default_max_attempts
         job_id = new_job_id()
-        self._run("enqueue", job_id, job_type, body, priority, attempts, int(delay_seconds * 1000))
+        outcome = self._run(
+            "enqueue",
+            job_id,
+            job_type,
+            body,
+            priority,
+            attempts,
+            int(delay_seconds * 1000),
+            int(deadline_seconds * 1000) if deadline_seconds else 0,
+            self.s.max_queue_depth,
+        )
+        if outcome == -1:
+            raise QueueFullError(f"the queue holds {self.s.max_queue_depth} jobs")
         job = self.get(job_id, with_history=False)
         assert job is not None
         return job
@@ -163,7 +196,7 @@ class RedisQueue:
     def claim(self, worker_id: str) -> Job | None:
         token = secrets.token_hex(16)
         lease_ms = int(self.s.lease_seconds * 1000)
-        flat = self._run("claim", worker_id, lease_ms, token)
+        flat = self._run("claim", worker_id, lease_ms, token, self.s.job_ttl_seconds)
         if not flat:
             return None
         return Job.from_hash(dict(zip(flat[::2], flat[1::2], strict=True)))
@@ -172,7 +205,13 @@ class RedisQueue:
         body = encode_json(result, self.s.max_result_bytes, ResultTooLargeError)
         return bool(
             self._run(
-                "complete", job.id, job.lease_token, body, self.s.job_ttl_seconds, duration_ms
+                "complete",
+                job.id,
+                job.lease_token,
+                body,
+                self.s.job_ttl_seconds,
+                duration_ms,
+                ",".join(map(str, LATENCY_BUCKETS_MS)),
             )
         )
 
@@ -247,6 +286,8 @@ class RedisQueue:
                 "cancelled",
                 "replayed",
                 "recovered",
+                "expired",
+                "rejected",
             )
         }
         return {
@@ -257,6 +298,13 @@ class RedisQueue:
             "dead_letter": dead,
             "due": due,
         }
+
+    def latency(self) -> dict[str, dict[str, int]]:
+        found: dict[str, dict[str, int]] = {}
+        for field, value in self.r.hgetall(self.key("latency")).items():
+            job_type, _, name = field.rpartition("|")
+            found.setdefault(job_type, {})[name] = int(value)
+        return found
 
     def worker_heartbeat(self, worker_id: str, info: dict[str, str | int]) -> None:
         now = int(time.time() * 1000)

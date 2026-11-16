@@ -1,7 +1,7 @@
 local id, token, result = ARGV[2], ARGV[3], ARGV[4]
-local ttl, duration = tonumber(ARGV[5]), tonumber(ARGV[6])
+local ttl, duration, buckets = tonumber(ARGV[5]), ARGV[6], ARGV[7]
 local key = job_key(id)
-local cur = redis.call('HMGET', key, 'state', 'lease_token', 'attempts', 'worker_id')
+local cur = redis.call('HMGET', key, 'state', 'lease_token', 'attempts', 'worker_id', 'type', 'created_at')
 if cur[1] ~= 'running' or cur[2] ~= token then return 0 end
 
 local now = now_ms()
@@ -11,6 +11,16 @@ redis.call('ZREM', LEASES, id)
 redis.call('HINCRBY', STATS, 'succeeded', 1)
 redis.call('LPUSH', P .. 'durations', duration)
 redis.call('LTRIM', P .. 'durations', 0, 999)
+
+local total = now - tonumber(cur[6])
+local bucket = '+Inf'
+for edge in string.gmatch(buckets, '[^,]+') do
+  if total <= tonumber(edge) then bucket = edge break end
+end
+redis.call('HINCRBY', LATENCY, cur[5] .. '|' .. bucket, 1)
+redis.call('HINCRBY', LATENCY, cur[5] .. '|count', 1)
+redis.call('HINCRBY', LATENCY, cur[5] .. '|sum', total)
+
 add_history(id, now, 'succeeded', 'succeeded', cur[3], cur[4], duration .. ' ms')
 expire_job(id, ttl)
 emit(id, 'running')

@@ -13,16 +13,23 @@ class JobState(StrEnum):
     FAILED = "failed"
     DEAD_LETTER = "dead_letter"
     CANCELLED = "cancelled"
+    EXPIRED = "expired"
 
 
 TERMINAL_STATES = frozenset(
-    {JobState.SUCCEEDED, JobState.FAILED, JobState.DEAD_LETTER, JobState.CANCELLED}
+    {
+        JobState.SUCCEEDED,
+        JobState.FAILED,
+        JobState.DEAD_LETTER,
+        JobState.CANCELLED,
+        JobState.EXPIRED,
+    }
 )
 
 ALLOWED_TRANSITIONS: dict[JobState | None, frozenset[JobState]] = {
     None: frozenset({JobState.QUEUED, JobState.SCHEDULED}),
     JobState.SCHEDULED: frozenset({JobState.QUEUED, JobState.CANCELLED}),
-    JobState.QUEUED: frozenset({JobState.RUNNING, JobState.CANCELLED}),
+    JobState.QUEUED: frozenset({JobState.RUNNING, JobState.CANCELLED, JobState.EXPIRED}),
     JobState.RUNNING: frozenset(
         {
             JobState.SUCCEEDED,
@@ -37,6 +44,7 @@ ALLOWED_TRANSITIONS: dict[JobState | None, frozenset[JobState]] = {
     JobState.SUCCEEDED: frozenset(),
     JobState.FAILED: frozenset(),
     JobState.CANCELLED: frozenset(),
+    JobState.EXPIRED: frozenset(),
 }
 
 CANCELLABLE_STATES = frozenset({JobState.SCHEDULED, JobState.QUEUED, JobState.RETRY_SCHEDULED})
@@ -62,6 +70,7 @@ class Job:
     created_at: int
     updated_at: int
     eligible_at: int | None = None
+    deadline_at: int | None = None
     started_at: int | None = None
     finished_at: int | None = None
     worker_id: str | None = None
@@ -84,6 +93,7 @@ class Job:
             created_at=int(data["created_at"]),
             updated_at=int(data["updated_at"]),
             eligible_at=_int(data.get("eligible_at")),
+            deadline_at=_int(data.get("deadline_at")),
             started_at=_int(data.get("started_at")),
             finished_at=_int(data.get("finished_at")),
             worker_id=data.get("worker_id") or None,

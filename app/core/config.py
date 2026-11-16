@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     idle_wait_seconds: float = Field(default=1.0, gt=0)
     maintenance_seconds: float = Field(default=0.5, gt=0)
     shutdown_grace_seconds: float = Field(default=20.0, ge=0)
+    worker_metrics_host: str = "127.0.0.1"
+    worker_metrics_port: int = Field(default=0, ge=0, le=65_535)
+
+    max_queue_depth: int = Field(default=0, ge=0)
+    retry_after_seconds: int = Field(default=5, ge=1, le=3_600)
+
+    llm_server_url: str = "http://127.0.0.1:8080"
+    llm_connect_timeout_seconds: float = Field(default=3.0, gt=0)
+    llm_read_timeout_seconds: float = Field(default=120.0, gt=0)
+    llm_max_text_chars: int = Field(default=2_000, ge=100, le=10_000)
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65_535)

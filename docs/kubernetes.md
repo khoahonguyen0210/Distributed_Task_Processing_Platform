@@ -14,9 +14,10 @@ This page runs the project on a local Kubernetes cluster. There, KEDA adds worke
 
 ## Start the cluster
 
-Run these in the repository folder:
+Run these in the repository folder. The cluster config also mounts `models/` for the language model, and the folder may be empty.
 
 ```bash
+mkdir -p models
 kind create cluster --config infra/kind/cluster.yaml
 docker build -f docker/Dockerfile -t taskq:local .
 docker save --platform linux/amd64 -o taskq.tar taskq:local
@@ -37,10 +38,10 @@ Open <http://127.0.0.1:8000>. With no jobs, no worker runs. Submit a few jobs, a
 |---|---|---|
 | Redis | Deployment, 1 pod, 1 GiB volume | API and worker pods only |
 | API | Deployment, 1 pod | Inside the cluster, or `kubectl port-forward` |
-| Workers | Deployment, 0 to 5 pods | Nothing. Workers have no port |
+| Workers | Deployment, 0 to 5 pods | Nothing from outside. In the inference setup, Prometheus reads their metrics port |
 | KEDA scaler | `ScaledObject` named `worker` | Reads the API inside the cluster |
 
-The manifests are in [`infra/kubernetes/`](../infra/kubernetes/). `base/` holds the app, and `autoscaling/` adds the scaler.
+The manifests are in [`infra/kubernetes/`](../infra/kubernetes/). `base/` holds the app, and `autoscaling/` adds the scaler. `inference/` adds model servers and Prometheus (see [`inference.md`](inference.md)), and `ci/` is the small setup that the CI workflow uses.
 
 ## How scaling works
 
@@ -52,7 +53,7 @@ backlog = ready jobs + running jobs + delayed jobs whose time has come
 
 KEDA wants one worker for each job in the backlog, from 0 up to 5 workers.
 
-- **Why not the Redis Lists scaler.** The ready queue is a Redis sorted set, not a list, and that scaler reads only the length of a list. So KEDA reads the number the API already computes, with its Metrics API scaler.
+- **Why not the Redis Lists scaler.** That scaler counts the items in one Redis key. Its documentation mentions only lists, but in KEDA 2.21 its script checks the key type and also counts sorted sets with `ZCARD`. One key is still not enough: the backlog adds the ready set, the running jobs, and only the part of the delayed set whose time has come. So KEDA reads the number the API already computes, with its Metrics API scaler.
 - **Why running jobs count.** Workers also take back jobs whose lease ran out. If only ready jobs counted, the last worker could be removed while a dead worker's job still waits to be taken back.
 - **Why due delayed jobs count.** Workers move delayed jobs into the ready queue when their time comes. With no workers, nobody would move them. Delayed jobs that are not due yet do not count, so a job delayed by an hour does not keep a worker running for an hour.
 

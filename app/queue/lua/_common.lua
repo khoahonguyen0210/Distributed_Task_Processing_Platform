@@ -6,6 +6,7 @@ local DEAD = P .. 'dead'
 local JOBS = P .. 'jobs'
 local STATS = P .. 'stats'
 local WAKE = P .. 'wake'
+local LATENCY = P .. 'latency'
 
 local function now_ms()
   local t = redis.call('TIME')

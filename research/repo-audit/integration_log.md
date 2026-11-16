@@ -43,14 +43,14 @@ What was built, why it was built that way, and how each part was checked. All da
 | Docker stack | `scripts/smoke_test.py` | `docker compose up --build --wait`: all services healthy |
 | Benchmark output | `tests/unit/test_benchmark.py` | Full run with 1, 3, and 5 workers, both models, and 3 trials. 7,200 of 7,200 jobs succeeded |
 
-Last full local run: 94 tests passed, and Ruff and mypy (strict) reported no issues.
+Last full local run (2026-11-16): 123 tests passed, and Ruff and mypy (strict) reported no issues.
 
 ## Security and privacy review
 
 | Check | Result |
 |---|---|
 | Personal data | None collected or stored. No accounts, tracking, or requests to other sites. The tracked files hold no names, paths, emails, or keys |
-| Running submitted code | Not possible. Only five built-in job types can run, and their payloads must match a strict JSON schema with no extra fields |
+| Running submitted code | Not possible. Only six built-in job types can run, and their payloads must match a strict JSON schema with no extra fields. `llm_generate` sends the prompt to the model as text and accepts only one model name |
 | Requests from other sites | A `text/plain` POST from another site is rejected (422). The WebSocket checks the `Origin` header |
 | DNS rebinding | Refused by the host check (400) |
 | Large requests | Refused before reading (413), or with 411 if there is no length |
@@ -61,7 +61,7 @@ Last full local run: 94 tests passed, and Ruff and mypy (strict) reported no iss
 
 The API has no sign-in on purpose, because it is meant for local use. This review is a careful check by hand, not a professional audit.
 
-## Autoscaling on Kubernetes (2026-11-15)
+## Autoscaling on Kubernetes
 
 This part adds a local Kubernetes cluster, where KEDA starts and stops workers based on the queue. The queue itself did not change.
 
@@ -79,7 +79,7 @@ This part adds a local Kubernetes cluster, where KEDA starts and stops workers b
 | Choice | Why | Other options |
 |---|---|---|
 | kind with one node | Free, runs in Docker, and is easy to delete | Docker Desktop's own Kubernetes, minikube |
-| KEDA's Metrics API scaler, reading `backlog` from the API | The ready queue is a sorted set, and the Redis Lists scaler only reads the length of a list | Redis Lists scaler (does not fit), Prometheus scaler (needs a Prometheus server) |
+| KEDA's Metrics API scaler, reading `backlog` from the API | The backlog adds ready, running, and due delayed jobs, and the Redis Lists scaler counts only one key. (An earlier note said that scaler reads only lists. That was wrong: the 2.21 source checks the key type and counts sorted sets with `ZCARD`, although its documentation mentions only lists. Corrected on 2026-11-16) | Redis Lists scaler (does not fit), Prometheus scaler (needs a Prometheus server) |
 | Count ready, running, and due delayed jobs | Workers also take back expired leases and move due jobs. With zero workers, nobody else would | Ready jobs only |
 | 0 to 5 workers, 1 job per worker | Matches the earlier 1, 3, and 5 worker benchmark | Higher limits, which one laptop cannot use well |
 | 35 s shutdown wait, 45 s grace period | The longest job is 30 s, so a removed worker can finish it | Shorter waits that cut jobs off |
@@ -106,9 +106,78 @@ This part adds a local Kubernetes cluster, where KEDA starts and stops workers b
 | Network policy | A pod in another namespace could not reach Redis. The API could |
 | `burst_benchmark.py`, 3 trials each of KEDA and 1, 3, and 5 fixed workers | 1,440 of 1,440 jobs succeeded, none twice. KEDA finished a 120-job burst in 32.9 s (median) with 239 worker-seconds. 5 fixed workers took 24.1 s and 1,000 worker-seconds. Full table in `docs/kubernetes.md` |
 
+## Language model jobs
+
+This part adds the `llm_generate` job type, a model server, deadlines, a queue limit, Prometheus, and autoscaling for the model servers. Details are in `docs/inference.md` and `docs/observability.md`.
+
+### Facts recorded before the work
+
+| Question | Answer |
+|---|---|
+| Hardware | Intel i7-1260P (4 performance cores with 2 threads each, 8 efficiency cores). Docker gives 16 CPUs and 7.6 GiB. Another project's kind cluster used about 4.2 GiB and up to 1 CPU the whole time |
+| Model | Qwen2.5-0.5B-Instruct, Q4_K_M GGUF, 491,400,032 bytes, SHA-256 `74a4da8c...d7a9db`, Apache-2.0. The hash matches the one Hugging Face publishes |
+| Model server image | `ghcr.io/ggml-org/llama.cpp:server-b12407`, pinned by digest `sha256:89fe93c2...b392` |
+| What `llamacpp:requests_deferred` counts | Requests waiting for a free slot. Test: send more requests than slots and read `/metrics` every 0.2 s. 2 slots, 6 requests: peak 2 running, 3 waiting. 4 slots, 8 requests: peak 4 waiting |
+| How the context is split | `kv_unified = false` when `--parallel` is set, so `--ctx-size 4096` gives each of 2 slots 2048 |
+| Prometheus install | Plain manifests, not a Helm chart, so every setting is in this repository. Prometheus used about 50 MiB |
+| CI runner | A GitHub-hosted runner has a few CPUs and no model file. The CI workflow uses a fake model server, so it needs no model download |
+
+### Choices
+
+| Choice | Why | Other options |
+|---|---|---|
+| llama.cpp on CPU with a 0.5B model | Free, runs on this laptop, and reports the metrics KEDA needs | vLLM (needs a GPU), a larger model (too slow here) |
+| Model file mounted from `./models` | Pods never download it, and Git never sees it | Download in an init container on each start |
+| Deadline on the job, not in the payload | Every job type can use it, and the state machine needs it in one place | A field only for `llm_generate` |
+| Expire in `claim.lua` | A late job is caught at the moment a worker would start it, in one Redis step | A separate sweep, which could race with the claim |
+| Queue limit checked inside `enqueue.lua` | The limit can never be passed by two requests at once | A check in Python before the insert |
+| Latency histogram kept in Redis | All workers add to one histogram, and the API serves it with the other metrics | One histogram per worker, merged in Prometheus |
+| 4 CPUs and 4 threads per model server, 2 slots | 4 threads were about twice as fast as 2. 2 slots make waiting requests show up early | 2 CPUs per server, 4 slots |
+| At most 2 model servers | Total speed stopped rising at 2 (see "Measurements") | 3 or 4, as the CPU count alone would suggest |
+| 3 workers with 2 jobs each in the benchmark | 6 requests in flight is a little more than 2 servers with 2 slots, so extra work waits in the Redis queue, where the queue limit can see it | 5 workers with 4 jobs each, which hid the waiting inside the model servers |
+
+### Measurements
+
+| What | Result |
+|---|---|
+| Speed of one server outside kind | 4 threads: 14.9 to 22.7 tokens/s for the whole server. 2 threads: 8.0 to 10.4 tokens/s |
+| Total speed with 1, 2, and 3 servers outside kind (4 threads each) | 14.9, 20.9, and 14.8 tokens/s |
+| Model load time in kind | 23 s on the first start. 24 s from container start to ready |
+| Memory per server | About 170 to 190 MiB, plus the shared 491 MB model file |
+| Baseline for the latency goal | First run: 180 s, 18 jobs, p95 31.1 s. With 18 jobs, p95 is the slowest job, so a second run of 300 s with 30 jobs replaced it: p50 7.0 s, p95 12.3 s, p99 16.0 s |
+| Capacity in kind, 40 jobs sent at 1 per second | 1 server: 40 of 40 succeeded, 0.287 jobs/s, 17.4 tokens/s. 3 servers: 13 succeeded, 27 expired, 22 runs retried after timeouts, 0.062 jobs/s |
+| Why 3 servers were slow in kind | One server had 1.2 million major page faults: memory was short, so model pages kept being dropped and read again from the Windows folder mount. Linux reported 25% memory pressure and 81% CPU pressure on the node |
+| CPU speed | Windows reported the CPU at 44% to 76% of its normal speed during this work. One run of the same test was 3 times slower than another |
+| LLM benchmark (5 modes, 2 trials each, 240 jobs) | 239 succeeded, 1 refused with 429, 0 expired, 0 lost, 0 retried. Median p95: fixed 1 server 10.1 s, fixed 2 servers 22.1 s, KEDA 21.0 s. KEDA used 345 server-seconds against 480 for 2 fixed servers. Raw data in `benchmarks/inference/20261116T161227Z/` |
+| Why the LLM trials varied | The average run time per job ranged from 2.6 s to 29.2 s. The slowest trial had 36% memory pressure and about 645 major page faults per second. One model server had read 631,061 file pages again (about 2.4 GB). Its pod never reached the 768 MiB limit, so the cause was the whole Docker machine running short of memory, with 4.3 GiB used by the other project's cluster |
+
+### Problems found and fixed
+
+| Problem | How it was found | Fix |
+|---|---|---|
+| A worker that starts before Redis is ready exits, and Kubernetes waits longer and longer before each restart | The first deploy of the inference stack | The worker now waits and tries Redis again every 2 s at start. A test covers it |
+| KEDA warned that `pollingInterval` and `cooldownPeriod` do nothing when the minimum is 1 | The KEDA warning on `kubectl apply` | Both were removed from the model-server scaler |
+| The benchmark first sent 20 requests at once to at most 6 slots, so the waiting happened inside the model servers and the queue limit never applied | Working out the queue limit | 3 workers with 2 jobs each |
+| One benchmark run started with a wrong note about the CPU speed | Reading the note after the start | It was stopped within seconds, its empty folder deleted, and the run started again with the measured range |
+| The first full LLM benchmark stopped during the 4th of its 10 runs, because Docker Desktop had stopped | The output files ended in the middle of a run | The partial data was not kept, and the benchmark was started again |
+| In the second attempt, the laptop went into Modern Standby twice, even though it was told to stay awake. After it woke up, one model server wrote each 64-token answer in about 1.3 s, while a run before the standby made only 13.3 tokens per second in total. Runs at such different CPU speeds cannot be compared | The benchmark's gap check, then the Windows event log (Kernel-Power events 506 and 507) | The run was stopped and its data was not kept. The third attempt also kept the display on, which stops Modern Standby, and logged the CPU speed every 10 s |
+| The third attempt stopped during its 3rd run, because the laptop went to sleep at 00:44 (Kernel-Power event 42, after a program asked Windows to sleep). Keeping the display on does not stop a sleep that is asked for | The output files ended in the middle of a run, then the Windows event log | The partial data was not kept. The fourth attempt ran in daytime with the laptop on power and watched |
+| The fourth attempt crashed in its 2nd run. Docker had just started both kind clusters, and the other project's Java pods kept restarting while they started. That cluster used about 9 CPUs, the Docker machine's load average reached 52, and only about 80 MiB of memory was free. Health checks then failed, the model servers and the API restarted, and the benchmark could not read the API for 90 s | The benchmark's error, then `docker stats` and `/proc/loadavg` in the node | The data was not kept. The fifth attempt started only after the load average had stayed under 4 for 2 minutes, when the other cluster was back to well under 1 CPU |
+| A benchmark that stopped early, or ended with admission control off, left the API with its own `MAX_QUEUE_DEPTH` value instead of the one in the ConfigMap | Reading the API settings before the fourth attempt | At the end, the benchmark removes its value, so the ConfigMap value applies again |
+| The first run of the cluster workflow failed in the worker-kill step. The CI cluster has no KEDA, and `kubectl get scaledobject` fails there with "the server doesn't have a resource type" instead of finding nothing | The failed step on GitHub, then the same command against a local cluster without KEDA | The scripts check for the KEDA CRD first, and treat a cluster without it as having no scalers |
+| The model-server chaos test sent 8 jobs at once. The queue limit refused some of them with 429, and the test crashed. It also left the model servers fixed at 2 | The first run of the test | The test sends a refused job again after 1 s and counts the refusals. It gives the model servers back to KEDA even when it fails |
+
+## Upstream contribution
+
+| Item | State on 2026-11-16 |
+|---|---|
+| Gap found | KEDA's Redis Lists scaler also counts sorted sets, sets and hashes (it checks the key type in its Lua script), but its documentation mentions only lists. The behavior dates back to v2.0. A docs pull request for it (kedacore/keda-docs#231) was closed unmerged in 2022 |
+| Checked | On KEDA 2.21.0 in kind: a sorted set of 7 gave the metric 7, a set of 5 gave 5, a hash of 3 fields gave 3, a list of 9 gave 9, a missing key gave 0, and a string key logged `unsupported key type: string` |
+| Next step | Open an issue in `kedacore/keda-docs` and send a pull request only after a maintainer assigns it, as KEDA's contribution rules require. Not opened yet |
+
 ## Not checked yet
 
-- A full passing run of the GitHub Actions workflow has not been confirmed yet.
+- The model-server benchmark used 2 trials per mode. The trials differed more than the modes did, so more trials, or a machine with more free memory, are needed before comparing latency between modes.
 - The stack was run only on Windows 11 with Docker Desktop. Linux is covered only by the CI workflow.
 - Valkey, a fully open source replacement for Redis 7.4, was not tested.
 
@@ -124,7 +193,10 @@ This part adds a local Kubernetes cluster, where KEDA starts and stops workers b
 | Live updates and monitoring | `app/events/`, `/metrics`, JSON logs | Tested |
 | Containers | `docker/Dockerfile`, `docker/docker-compose.yml` | Run locally |
 | Benchmark | `scripts/benchmark.py`, `benchmarks/results/` | Measured on one laptop |
-| CI | `.github/workflows/ci.yml` | Written. A full passing run is not confirmed yet |
+| CI | `.github/workflows/ci.yml`, `.github/workflows/cluster.yml` | `ci.yml` passed on a push to `inference-platform` on 2026-11-16 in 51 s: <https://github.com/khoahonguyen0210/Distributed_Task_Processing_Platform/actions/runs/43922341634>. `cluster.yml` (kind, fake model server, smoke test, worker-kill and LLM worker-kill tests) passed on a push to `main` on 2026-11-16 in 3 min 0 s, of which the kill tests took 84 s: <https://github.com/khoahonguyen0210/Distributed_Task_Processing_Platform/actions/runs/43926657625>. The plan asked for a pass on a pull request; the owner merges straight to `main`, so the workflow also runs on pushes to `main` |
 | Security | README "Privacy and security", `tests/unit/test_http_limits.py`, the package scan | Checked by hand and tested. Not an audit |
 | Kubernetes and KEDA | `infra/`, `docs/kubernetes.md`, `scripts/chaos_test.py`, `scripts/burst_benchmark.py` | Run on a local kind cluster |
+| Language model jobs | `app/jobs/llm.py`, `infra/kubernetes/inference/`, `docs/inference.md`, `scripts/llm_benchmark.py`, `benchmarks/inference/` | Tested with a fake model server. Run, scaled up and down, and measured on a local kind cluster |
+| Deadlines and the queue limit | `enqueue.lua`, `claim.lua`, `tests/integration/test_admission.py` | Tested |
+| Prometheus metrics and the latency goal | `app/observability/`, `app/workers/metrics_server.py`, `docs/observability.md` | Tested, and read by Prometheus in the cluster |
 | AWS, Terraform | None | Not part of this project |

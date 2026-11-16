@@ -4,9 +4,9 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from pydantic import ValidationError
 
 from app.api.schemas import JobDetail, JobList, JobOut, JobType, SubmitJob
-from app.jobs import REGISTRY, UnknownJobTypeError, validate_payload
+from app.jobs import REGISTRY, UnknownJobTypeError, get_spec, validate_payload
 from app.queue.models import JobState
-from app.queue.redis_queue import PayloadTooLargeError, RedisQueue
+from app.queue.redis_queue import PayloadTooLargeError, QueueFullError, RedisQueue
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
@@ -45,13 +45,29 @@ def submit_job(body: SubmitJob, request: Request) -> JobOut:
         ) from None
     except ValidationError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, clean_errors(exc)) from None
+    deadline = body.deadline_seconds
+    if deadline is None:
+        deadline = get_spec(body.type).deadline_seconds
+        if deadline is not None and deadline <= body.delay_seconds:
+            deadline = None
     try:
         job = get_queue(request).enqueue(
-            body.type, body.payload, body.priority, body.delay_seconds, body.max_attempts
+            body.type,
+            body.payload,
+            body.priority,
+            body.delay_seconds,
+            body.max_attempts,
+            deadline,
         )
     except PayloadTooLargeError as exc:
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE, f"Payload is too large: {exc}"
+        ) from None
+    except QueueFullError:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "The queue is full. Try again later.",
+            headers={"Retry-After": str(request.app.state.settings.retry_after_seconds)},
         ) from None
     return JobOut.of(job)
 
